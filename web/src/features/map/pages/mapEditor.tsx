@@ -19,7 +19,9 @@ export const MapEditor = () => {
                     {point && <Marker icon={createIcon('ok')} position={[point.lat, point.lng]}/>}
                 </MapView>
                 {point !== null && (
-                    <div className='w-max-80 shrink-0'>
+                    <div className='fixed inset-x-0 bottom-0 z-1100 max-h-[50vh] overflow-y-auto rounded-t-2xl
+                    bg-white p-4 shadow-lg
+                    md:static md:z-auto md:max-h-none md:w-80 md:shrink-0 md:rounded-xl md:p-0 md:shadow-none'>
                         <MarkerForm point={point} onSuccess={() => setPoint(null)}/>
                     </div>
                 )}
