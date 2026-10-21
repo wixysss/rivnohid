@@ -3,7 +3,7 @@ import L from 'leaflet'
 export const MARKER_STYLES: Record<string, { bg: string, label: string }> = {
     ok: {bg: 'bg-green-500',label:'Зелений'},
     warning: {bg: 'bg-yellow-400',label:'Жовтий'},
-    bad: {bg: 'bg-red-500',label: 'Червони'},
+    bad: {bg: 'bg-red-500',label: 'Червоний'},
 }
 
 const DEFAULT_STYLE = {bg: 'bg-gray-400', label: 'Невідомо'}
