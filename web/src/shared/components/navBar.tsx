@@ -20,7 +20,7 @@ export const NavBar = () => {
 
     return (
         <div className='w-full flex justify-between items-center p-2'>
-            <Link to='/map'><h1 className='text-[30px]'>Rivnochid</h1></Link>
+            <Link to='/map'><h1 className='text-[30px]'>Rivnohid</h1></Link>
 
             <div className='flex gap-5 items-center'>
                 <Link to='/map'>Map</Link>
