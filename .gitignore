@@ -1,0 +1,5 @@
+.idea/
+supabase/.temp/
+supabase/.env*
+firmware/secrets.h
+Thumbs.db
