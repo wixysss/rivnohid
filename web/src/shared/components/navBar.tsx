@@ -27,6 +27,7 @@ export const NavBar = () => {
             <div className='flex gap-5 items-center'>
                 <Link to='/map'>Map</Link>
                 <Link to='/map/editor'>Map editor</Link>
+                <Link to='/live'>Live</Link>
 
                 <div className='cursor-pointer' onClick={() => setIsOpen((prev) => !prev)}><FiUser size={40}/></div>
 
