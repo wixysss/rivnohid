@@ -170,7 +170,7 @@ bool connectBestKnown() {
   int best = -1, bestRssi = -1000, bestIdx = -1;
   for (int i = 0; i < n; i++) {
     for (size_t k = 0; k < WIFI_COUNT; k++) {
-      if (WiFi.SSID(i) == WIFI_NETWORKS[k].ssid && WiFi.RSSI(i) > bestRssi) {
+      if (WiFi.SSID(i).equalsIgnoreCase(WIFI_NETWORKS[k].ssid) && WiFi.RSSI(i) > bestRssi) {
         best = (int)k; bestRssi = WiFi.RSSI(i); bestIdx = i;
       }
     }
@@ -184,8 +184,9 @@ bool connectBestKnown() {
   }
   Serial.printf("Wi-Fi: підключаюсь до [%s] (%d dBm, канал %d)\n",
                 WIFI_NETWORKS[best].ssid, bestRssi, WiFi.channel(bestIdx));
+  String ssid = WiFi.SSID(bestIdx);   // точна назва з ефіру (регістр може відрізнятися)
   WiFi.scanDelete();
-  WiFi.begin(WIFI_NETWORKS[best].ssid, WIFI_NETWORKS[best].pass);
+  WiFi.begin(ssid.c_str(), WIFI_NETWORKS[best].pass);
   // Менше стрибків струму від радіо = стабільніше живлення датчика
   WiFi.setSleep(false);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
