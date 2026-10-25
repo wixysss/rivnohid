@@ -4,6 +4,7 @@ import {useState} from "react";
 import {MdLogout} from "react-icons/md";
 import {FiUser} from "react-icons/fi";
 import {useAuthStore} from "../../features/auth/store/useAuthStore.ts";
+import logo from '../../../public/logo.png'
 
 export const NavBar = () => {
     const [isOpen, setIsOpen] = useState(false)
@@ -20,7 +21,8 @@ export const NavBar = () => {
 
     return (
         <div className='w-full flex justify-between items-center p-2'>
-            <Link to='/map'><h1 className='text-[30px]'>Rivnohid</h1></Link>
+            <Link className='flex items-center gap-1' to='/map'><img alt='rivnohid' className='w-15 h-auto' src={logo}/> <h1
+                className='text-[30px]'>Rivnohid</h1></Link>
 
             <div className='flex gap-5 items-center'>
                 <Link to='/map'>Map</Link>

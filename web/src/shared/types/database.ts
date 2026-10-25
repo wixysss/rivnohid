@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      devices: {
+        Row: {
+          created_at: string
+          id: string
+          last_seen_at: string | null
+          name: string
+          revoked_at: string | null
+          token_hash: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_seen_at?: string | null
+          name: string
+          revoked_at?: string | null
+          token_hash: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_seen_at?: string | null
+          name?: string
+          revoked_at?: string | null
+          token_hash?: string
+        }
+        Relationships: []
+      }
       marker_types: {
         Row: {
           id: number
@@ -36,6 +63,8 @@ export type Database = {
         Row: {
           created_at: string
           description: string | null
+          device_id: string | null
+          event_id: string | null
           id: string
           lat: number
           lng: number
@@ -47,6 +76,8 @@ export type Database = {
         Insert: {
           created_at?: string
           description?: string | null
+          device_id?: string | null
+          event_id?: string | null
           id?: string
           lat: number
           lng: number
@@ -58,6 +89,8 @@ export type Database = {
         Update: {
           created_at?: string
           description?: string | null
+          device_id?: string | null
+          event_id?: string | null
           id?: string
           lat?: number
           lng?: number
@@ -67,6 +100,13 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "markers_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: false
+            referencedRelation: "devices"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "markers_type_id_fkey"
             columns: ["type_id"]
