@@ -75,6 +75,8 @@ uint32_t seq = 0, nextSampleUs = 0, bumpLedUntil = 0, lastBumpMs = 0;
 bool  sensorOk = false, markPending = false;
 uint32_t badReads = 0;
 bool  otaStarted = false, otaActive = false;
+uint32_t lastGoodRead = 0;
+String publishedState = "";      // що востаннє опублікували в MQTT_STATUS
 const size_t WIFI_COUNT = sizeof(WIFI_NETWORKS) / sizeof(WIFI_NETWORKS[0]);
 
 // ---------- світлодіод ----------
@@ -231,7 +233,7 @@ void ensureMqtt() {
   Serial.print("MQTT: підключаюсь... ");
   // LWT: якщо пристрій зникне, брокер сам опублікує "offline"
   if (mqtt.connect(id.c_str(), MQTT_STATUS, 0, true, "offline")) {
-    mqtt.publish(MQTT_STATUS, "online", true);
+    publishedState = "";          // після перепідключення опублікуємо стан заново
     Serial.println("OK");
   }
   else Serial.printf("помилка %d\n", mqtt.state());
@@ -286,6 +288,19 @@ void sendBatch() {
   if (++k % 10 == 0) { Serial.printf("rms=%.3fg pk=%.3fg mqtt=%d sat=%d bad=%lu\n", rms, peak, mqtt.connected(), (int)gps.satellites.value(), (unsigned long)badReads); badReads = 0; }
 
   batchN = 0; sumSq = 0; peak = 0;
+}
+
+// Стан пристрою для сайту: online / no_sensor / sensor_error (retained)
+void publishState() {
+  if (!mqtt.connected()) return;
+  const char* st = !sensorOk ? "no_sensor"
+                 : (millis() - lastGoodRead > 2000) ? "sensor_error"
+                 : "online";
+  if (publishedState == st) return;
+  if (mqtt.publish(MQTT_STATUS, st, true)) {
+    publishedState = st;
+    Serial.printf("Стан: %s\n", st);
+  }
 }
 
 void setup() {
@@ -356,6 +371,7 @@ void loop() {
     }
     if (okRead) {
       failRun = 0;
+      lastGoodRead = millis();
       // проєкція на напрям гравітації мінус 1g = вертикальний струс
       float av = (ax * gx0 + ay * gy0 + az * gz0) / gMag - gMag;
       batchBuf[batchN++] = (int16_t)lroundf(av * 1000.0f);
@@ -388,6 +404,7 @@ void loop() {
     }
     if (WiFi.status() == WL_CONNECTED) startOta();
     ensureMqtt();
+    publishState();
   }
   mqtt.loop();
 
