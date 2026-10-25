@@ -6,6 +6,7 @@ import {RegisterPage} from "../features/auth/pages/registerPage.tsx";
 import {ProtectedOnlyRoute} from "../features/auth/routes/protectedOnlyRoute.tsx";
 import {MapPage} from "../features/map/pages/mapPage.tsx";
 import {MapEditor} from "../features/map/pages/mapEditor.tsx";
+import {LivePage} from "../features/live/pages/livePage.tsx";
 
 export const Router = () => {
     return (
@@ -14,6 +15,7 @@ export const Router = () => {
 
                 <Route path='/' element={<Navigate to='/login'/>}/>
                 <Route path='/map' element={<MapPage/>}/>
+                <Route path='/live' element={<LivePage/>}/>
 
                 <Route element={<PublicOnlyRoute/>}>
 
