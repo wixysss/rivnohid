@@ -1,10 +1,10 @@
 import {useEffect, useRef, useState} from "react";
 import {LiveStore} from "../liveStore.ts";
 import {MqttSubscriber} from "../mqttWs.ts";
-import {type LivePacket, MQTT_TOPIC, MQTT_URL, OFFLINE_AFTER_MS} from "../constants.ts";
+import {type LivePacket, MQTT_STATUS_TOPIC, MQTT_SUBSCRIBE, MQTT_TOPIC, MQTT_URL, OFFLINE_AFTER_MS} from "../constants.ts";
 import {startDemo} from "../demoSource.ts";
 
-export type FeedStatus = 'connecting' | 'waiting' | 'live' | 'demo'
+export type FeedStatus = 'connecting' | 'waiting' | 'offline' | 'lowBattery' | 'live' | 'demo'
 
 // Підключення до пристрою через MQTT + демо-режим.
 // Дані лежать у LiveStore (ref), а React перемальовується ~5 разів на секунду.
@@ -12,6 +12,8 @@ export const useLiveFeed = () => {
     const storeRef = useRef(new LiveStore())
     const [demo, setDemo] = useState(() => new URLSearchParams(location.search).has('demo'))
     const [brokerUp, setBrokerUp] = useState(false)
+    // Стан, який пристрій сам публікує (retained), брокер ставить "offline", якщо пристрій зник
+    const [deviceState, setDeviceState] = useState<string | null>(null)
     const [, setTick] = useState(0)
 
     useEffect(() => {
@@ -19,11 +21,14 @@ export const useLiveFeed = () => {
         store.reset()
         if (demo) return startDemo((p) => store.push(p))
 
-        const client = new MqttSubscriber(MQTT_URL, MQTT_TOPIC, {
+        const client = new MqttSubscriber(MQTT_URL, MQTT_SUBSCRIBE, {
             onStatus: setBrokerUp,
-            onMessage: (_, payload) => {
+            onMessage: (topic, payload) => {
+                const text = new TextDecoder().decode(payload)
+                if (topic === MQTT_STATUS_TOPIC) return setDeviceState(text)
+                if (topic !== MQTT_TOPIC) return
                 try {
-                    store.push(JSON.parse(new TextDecoder().decode(payload)) as LivePacket)
+                    store.push(JSON.parse(text) as LivePacket)
                 } catch {
                     /* битий пакет — пропускаємо */
                 }
@@ -39,7 +44,12 @@ export const useLiveFeed = () => {
 
     const store = storeRef.current
     const fresh = store.lastPacketAt > 0 && performance.now() - store.lastPacketAt < OFFLINE_AFTER_MS
-    const status: FeedStatus = demo ? 'demo' : fresh ? 'live' : brokerUp ? 'waiting' : 'connecting'
+    const status: FeedStatus = demo ? 'demo'
+        : fresh ? 'live'
+            : !brokerUp ? 'connecting'
+                : deviceState === 'low_battery' ? 'lowBattery'
+                    : deviceState === 'offline' ? 'offline'
+                        : 'waiting'
 
     return {store, status, demo, setDemo}
 }
