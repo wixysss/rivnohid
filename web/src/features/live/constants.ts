@@ -1,6 +1,8 @@
 // Мають збігатися з прошивкою ESP32 (rivnohid_live.ino)
 export const MQTT_URL = 'wss://broker.hivemq.com:8884/mqtt'
 export const MQTT_TOPIC = 'rivnohid/rv7f3k/live'
+export const MQTT_STATUS_TOPIC = 'rivnohid/rv7f3k/status'   // online / offline / low_battery
+export const MQTT_SUBSCRIBE = 'rivnohid/rv7f3k/#'
 
 export const SAMPLE_HZ = 200
 export const WAVE_SECONDS = 10

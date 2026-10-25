@@ -11,6 +11,8 @@ import {LEVELS} from "../constants.ts";
 const STATUS: Record<FeedStatus, { text: string, dot: string }> = {
     connecting: {text: 'Підключення до сервера…', dot: 'bg-zinc-400'},
     waiting: {text: 'Чекаю на пристрій…', dot: 'bg-yellow-400'},
+    offline: {text: 'Пристрій вимкнений або без інтернету', dot: 'bg-zinc-400'},
+    lowBattery: {text: 'Пристрій заснув: розряджений акумулятор', dot: 'bg-red-500'},
     live: {text: 'Пристрій онлайн', dot: 'bg-green-500 animate-pulse'},
     demo: {text: 'Демо-дані', dot: 'bg-[#2a78d6]'},
 }
