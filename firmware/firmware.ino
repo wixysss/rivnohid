@@ -47,7 +47,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "2.2"
+#define FW_VERSION "2.3"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -125,7 +125,7 @@ int8_t   micSlot = I2S_STD_SLOT_LEFT;
 // Мікрофон читає окрема задача і складає відліки (8 кГц, 16 біт) у буфер,
 // а loop() переписує їх на SD. Так екран, мережа й SD не гублять звук.
 StreamBufferHandle_t recBuf = nullptr;   // створюється лише на час запису (звільняє RAM для HTTPS)
-volatile bool recActive = false, recTaskIdle = true;
+volatile bool recActive = false, recTaskIdle = true, recDcInit = false;
 SemaphoreHandle_t sdMutex;
 // Без SD-картки запис іде в RAM: 8 кГц, 8 біт, до ~8 с
 #define RAM_REC_MAX  (64 * 1024)
@@ -176,7 +176,15 @@ void toast(const String& a, const String& b = "", uint32_t ms = 2500) {
   Serial.printf("[екран] %s | %s\n", a.c_str(), b.c_str());
 }
 
-bool gpsFix() { return gps.location.isValid() && gps.location.age() < 3000; }
+// GPS-фікс, якому можна вірити. В Україні сигнал часто підміняють (РЕБ):
+// приймаємо лише координати в межах України, з ≥4 супутниками й нормальною точністю.
+bool gpsFix() {
+  if (!gps.location.isValid() || gps.location.age() >= 3000) return false;
+  if (gps.satellites.isValid() && gps.satellites.value() < 4) return false;
+  if (gps.hdop.isValid() && gps.hdop.hdop() > 5.0) return false;
+  double la = gps.location.lat(), lo = gps.location.lng();
+  return la > 44.0 && la < 52.5 && lo > 22.0 && lo < 40.5;
+}
 
 float batteryV() { return analogRead(PIN_BATT) / 4095.0f * 3.3f * 2.0f; }
 
@@ -599,6 +607,7 @@ void micTask(void*) {
     size_t n = got / 4, m = 0;
     for (size_t i = 0; i + 1 < n; i += 2) {           // середнє пари = 8 кГц
       int32_t v = ((raw[i] >> MIC_SHIFT) + (raw[i + 1] >> MIC_SHIFT)) / 2;
+      if (!recDcInit) { recDc = v; recDcInit = true; }  // старт фільтра з першого відліку, без клацання
       recDc += (v - recDc) / 64;                      // прибрати постійну складову
       v -= recDc;
       out[m++] = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
@@ -638,7 +647,7 @@ void recStartNote() {
     if (!micStart()) { vStreamBufferDelete(recBuf); recBuf = nullptr; free(ramRec); ramRec = nullptr; recToRam = false; toast("Мікрофон", "помилка I2S"); return; }
     recLat = gpsFix() ? gps.location.lat() : NAN;
     recLon = gpsFix() ? gps.location.lng() : NAN;
-    recording = true; recStart = millis(); recSamples = 0; recDc = 0;
+    recording = true; recStart = millis(); recSamples = 0; recDc = 0; recDcInit = false;
     recActive = true;
     char ev[160];
     snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str());
@@ -664,7 +673,7 @@ void recStartNote() {
   }
   recLat = gpsFix() ? gps.location.lat() : NAN;
   recLon = gpsFix() ? gps.location.lng() : NAN;
-  recording = true; recStart = millis(); recSamples = 0; recDc = 0;
+  recording = true; recStart = millis(); recSamples = 0; recDc = 0; recDcInit = false;
   recActive = true;
   char ev[160];
   snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str());
