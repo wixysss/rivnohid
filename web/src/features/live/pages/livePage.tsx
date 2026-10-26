@@ -6,7 +6,7 @@ import {WaveChart} from "../components/waveChart.tsx";
 import {RoadStrip} from "../components/roadStrip.tsx";
 import {EventList} from "../components/eventList.tsx";
 import {LiveTrackMap} from "../components/liveTrackMap.tsx";
-import {LEVELS} from "../constants.ts";
+import {type DeviceDiag, LEVELS} from "../constants.ts";
 import {SosBanner, SosMissingNotice} from "../components/sosBanner.tsx";
 
 const STATUS: Record<FeedStatus, { text: string, dot: string }> = {
@@ -54,8 +54,24 @@ const Axis = ({labels}: { labels: string[] }) => (
     </div>
 )
 
+// Що підключено до пристрою (пристрій публікує після кожного підключення)
+const DiagRow = ({diag}: { diag: DeviceDiag }) => {
+    const items: [string, 0 | 1][] = [['Акселерометр', diag.mpu], ['Мікрофон', diag.mic], ['SD-картка', diag.sd],
+        ['Екран', diag.oled], ['SIM800L', diag.gsm], ['Номер SOS', diag.sos]]
+    return (
+        <div className='mb-4 flex flex-wrap items-center gap-2 text-xs text-zinc-600'>
+            <span>Пристрій v{diag.fw}{diag.ssid ? ` · ${diag.ssid}` : ''}:</span>
+            {items.map(([label, ok]) => (
+                <span key={label} className={`rounded-full px-2 py-0.5 ${ok ? 'bg-green-50 text-green-700' : 'bg-zinc-100 text-zinc-500 line-through'}`}>
+                    {label}
+                </span>
+            ))}
+        </div>
+    )
+}
+
 export const LivePage = () => {
-    const {store, status, demo, setDemo} = useLiveFeed()
+    const {store, status, demo, setDemo, diag} = useLiveFeed()
     const s = STATUS[status]
 
     return (
@@ -85,6 +101,7 @@ export const LivePage = () => {
 
                 {store.sos && <SosBanner sos={store.sos} onDismiss={() => { store.sos = null }}/>}
                 <SosMissingNotice/>
+                {diag && <DiagRow diag={diag}/>}
 
                 <div className='grid gap-4 lg:grid-cols-[300px_1fr]'>
                     <div className='contents lg:flex lg:flex-col lg:gap-4'>

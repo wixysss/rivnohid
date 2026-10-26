@@ -34,7 +34,8 @@
 #include <PubSubClient.h>
 #include <TinyGPSPlus.h>
 #include <U8g2lib.h>
-#include <driver/i2s.h>
+#include <ESP_I2S.h>          // новий драйвер I2S (core 3.x); старий driver/i2s.h конфліктує з analogRead
+#include <freertos/stream_buffer.h>
 #include <esp_sleep.h>
 
 #include "secrets.h"
@@ -45,6 +46,8 @@ const int   MQTT_PORT   = 1883;
 const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
+const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
+#define FW_VERSION "2.1"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -87,6 +90,7 @@ PubSubClient mqtt(net);
 TinyGPSPlus  gps;
 Preferences  prefs;
 U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
+I2SClass     mic;
 
 const size_t WIFI_COUNT = sizeof(WIFI_NETWORKS) / sizeof(WIFI_NETWORKS[0]);
 
@@ -101,6 +105,7 @@ float    sumSq = 0, peak = 0;
 uint32_t seq = 0, bumpLedUntil = 0, lastBumpMs = 0, lastGoodRead = 0, badReads = 0;
 float    lastRms = 0;
 String   publishedState = "";
+bool     diagDirty = true;      // треба (пере)опублікувати діагностику
 
 // Кнопка 3: стан доріг на карті
 bool     roadMode = false;
@@ -110,13 +115,18 @@ double   roadLastLat = 0, roadLastLon = 0; bool roadHasLast = false;
 uint32_t roadMarks = 0;
 
 // Голос
-bool     recording = false;
+volatile bool recording = false;
 File     recFile;
 uint32_t recStart = 0, recSamples = 0;
 double   recLat = NAN, recLon = NAN;
 char     recPath[32];
 int32_t  recDc = 0;
-i2s_channel_fmt_t micChannel = I2S_CHANNEL_FMT_ONLY_LEFT;
+int8_t   micSlot = I2S_STD_SLOT_LEFT;
+// Мікрофон читає окрема задача і складає відліки (8 кГц, 16 біт) у буфер,
+// а loop() переписує їх на SD. Так екран, мережа й SD не гублять звук.
+StreamBufferHandle_t recBuf;
+volatile bool recActive = false, recTaskIdle = true;
+SemaphoreHandle_t sdMutex;
 
 // SOS
 char     sosPhone[24] = "";
@@ -329,7 +339,20 @@ void ensureMqtt() {
   if (millis() - lastTry < 3000) return;
   lastTry = millis();
   String id = "rivnohid-" + String((uint32_t)ESP.getEfuseMac(), HEX);
-  if (mqtt.connect(id.c_str(), MQTT_STATUS, 0, true, "offline")) { publishedState = ""; Serial.println("MQTT OK"); }
+  if (mqtt.connect(id.c_str(), MQTT_STATUS, 0, true, "offline")) { publishedState = ""; diagDirty = true; Serial.println("MQTT OK"); }
+}
+
+// Діагностика: що знайдено на старті, щоб бачити на сайті без монітора порту
+void publishDiag() {
+  if (!mqtt.connected() || !diagDirty) return;
+  char phoneSet;
+  xSemaphoreTake(sosMutex, portMAX_DELAY); phoneSet = sosPhone[0] ? 1 : 0; xSemaphoreGive(sosMutex);
+  char js[256];
+  snprintf(js, sizeof(js),
+           "{\"fw\":\"%s\",\"sd\":%d,\"mic\":%d,\"oled\":%d,\"gsm\":%d,\"mpu\":%d,\"sos\":%d,\"ssid\":\"%s\",\"ip\":\"%s\"}",
+           FW_VERSION, sdOk, micOk, oledOk, gsmOk, sensorOk, phoneSet,
+           WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+  if (mqtt.publish(MQTT_DIAG, js, true)) diagDirty = false;
 }
 
 void publishState() {
@@ -469,8 +492,10 @@ void netTask(void*) {
       sendResult(code == 200 ? RES_SOS_OK : RES_SOS_FAIL, "", j.lat, j.lon);
 
     } else if (j.type == JOB_VOICE) {
+      while (recording) vTaskDelay(pdMS_TO_TICKS(500));   // не заважаємо новому запису
+      xSemaphoreTake(sdMutex, portMAX_DELAY);           // SD не можна читати з двох задач одночасно
       File f = SD.open(j.path, FILE_READ);
-      if (!f) { sendResult(RES_VOICE_FAIL); continue; }
+      if (!f) { xSemaphoreGive(sdMutex); sendResult(RES_VOICE_FAIL); continue; }
       String head = "{" + tok + ",\"p_lat\":" + fmtCoord(j.lat) + ",\"p_lng\":" + fmtCoord(j.lon) +
                     ",\"p_duration_ms\":" + String(j.durMs) + ",\"p_sample_rate\":" + String(REC_RATE_OUT) +
                     ",\"p_audio_b64\":\"";
@@ -478,9 +503,9 @@ void netTask(void*) {
       Serial.printf("Надсилаю %s (%u байт)\n", j.path, (unsigned)f.size());
       code = rpc("device_add_voice_note", &body, body.total, resp);
       f.close();
+      if (code == 200) { SD.remove(j.path); String meta = String(j.path); meta.replace(".wav", ".txt"); SD.remove(meta); }
+      xSemaphoreGive(sdMutex);
       if (code == 200) {
-        SD.remove(j.path);
-        String meta = String(j.path); meta.replace(".wav", ".txt"); SD.remove(meta);
         sendResult(RES_VOICE_OK, jsonStr("{\"x\":" + resp + "}", "x"), j.lat, j.lon, j.durMs);
       } else {
         Serial.printf("Голос не надіслано: %d %s\n", code, resp.c_str());
@@ -500,43 +525,48 @@ void queueJob(const Job& j) {
 //                                Голос
 // =====================================================================
 bool micStart() {
-  i2s_config_t cfg; memset(&cfg, 0, sizeof(cfg));
-  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
-  cfg.sample_rate = REC_RATE_IN;
-  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT;
-  cfg.channel_format = micChannel;
-  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-  cfg.dma_buf_count = 16;
-  cfg.dma_buf_len = 256;
-  if (i2s_driver_install(I2S_NUM_0, &cfg, 0, NULL) != ESP_OK) return false;
-  i2s_pin_config_t pins; memset(&pins, 0, sizeof(pins));
-  pins.mck_io_num = I2S_PIN_NO_CHANGE;
-  pins.bck_io_num = PIN_I2S_BCLK;
-  pins.ws_io_num = PIN_I2S_WS;
-  pins.data_out_num = I2S_PIN_NO_CHANGE;
-  pins.data_in_num = PIN_I2S_DIN;
-  if (i2s_set_pin(I2S_NUM_0, &pins) != ESP_OK) { i2s_driver_uninstall(I2S_NUM_0); return false; }
-  i2s_zero_dma_buffer(I2S_NUM_0);
-  return true;
+  mic.setPins(PIN_I2S_BCLK, PIN_I2S_WS, -1, PIN_I2S_DIN);
+  mic.setTimeout(100);
+  return mic.begin(I2S_MODE_STD, REC_RATE_IN, I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO, micSlot);
 }
-void micStop() { i2s_driver_uninstall(I2S_NUM_0); }
+void micStop() { mic.end(); }
 
 // Перевірка мікрофона на старті: якщо лівий канал мовчить, пробуємо правий
 void micProbe() {
+  static int32_t buf[256];
   for (int attempt = 0; attempt < 2; attempt++) {
     if (!micStart()) { Serial.println("I2S не стартував"); return; }
-    int32_t buf[256]; size_t got = 0; int32_t mx = 0;
+    int32_t mx = 0;
     uint32_t t0 = millis();
     while (millis() - t0 < 300) {
-      i2s_read(I2S_NUM_0, buf, sizeof(buf), &got, pdMS_TO_TICKS(50));
+      size_t got = mic.readBytes((char*)buf, sizeof(buf));
       for (size_t i = 0; i < got / 4; i++) { int32_t v = abs(buf[i] >> 16); if (v > mx) mx = v; }
     }
     micStop();
-    Serial.printf("Мікрофон (%s): рівень %ld\n", micChannel == I2S_CHANNEL_FMT_ONLY_LEFT ? "лівий" : "правий", (long)mx);
+    Serial.printf("Мікрофон (%s): рівень %ld\n", micSlot == I2S_STD_SLOT_LEFT ? "лівий" : "правий", (long)mx);
     if (mx > 0) { micOk = true; return; }
-    micChannel = micChannel == I2S_CHANNEL_FMT_ONLY_LEFT ? I2S_CHANNEL_FMT_ONLY_RIGHT : I2S_CHANNEL_FMT_ONLY_LEFT;
+    micSlot = micSlot == I2S_STD_SLOT_LEFT ? I2S_STD_SLOT_RIGHT : I2S_STD_SLOT_LEFT;
   }
   Serial.println("Мікрофон мовчить: перевір SCK=26, WS=25, SD=39, L/R на GND");
+}
+
+// Задача мікрофона: 16 кГц/32 біт -> 8 кГц/16 біт у recBuf
+void micTask(void*) {
+  static int32_t raw[256];
+  static int16_t out[128];
+  for (;;) {
+    if (!recActive) { recTaskIdle = true; vTaskDelay(pdMS_TO_TICKS(5)); continue; }
+    recTaskIdle = false;
+    size_t got = mic.readBytes((char*)raw, sizeof(raw));
+    size_t n = got / 4, m = 0;
+    for (size_t i = 0; i + 1 < n; i += 2) {           // середнє пари = 8 кГц
+      int32_t v = ((raw[i] >> MIC_SHIFT) + (raw[i + 1] >> MIC_SHIFT)) / 2;
+      recDc += (v - recDc) / 64;                      // прибрати постійну складову
+      v -= recDc;
+      out[m++] = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
+    }
+    if (m) xStreamBufferSend(recBuf, out, m * 2, 0);  // якщо буфер повний — відліки губляться, але не зависаємо
+  }
 }
 
 void wavHeader(File& f, uint32_t dataBytes) {
@@ -555,53 +585,71 @@ void recStartNote() {
   if (!micOk) { toast("Мікрофон", "не відповідає"); return; }
   uint32_t n = prefs.getUInt("recN", 0) + 1; prefs.putUInt("recN", n);
   snprintf(recPath, sizeof(recPath), "/rec/%05lu.wav", (unsigned long)n);
+  // Якщо саме надсилається попередня нотатка (SD зайнята), не чекаємо, щоб не завис пристрій
+  if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(50)) != pdTRUE) { toast("Зачекай кілька с", "надсилаю нотатку..."); return; }
   recFile = SD.open(recPath, FILE_WRITE);
-  if (!recFile) { toast("Помилка SD", "не створився файл"); return; }
-  uint8_t zero[44] = {0}; recFile.write(zero, 44);
-  if (!micStart()) { recFile.close(); SD.remove(recPath); toast("Мікрофон", "помилка I2S"); return; }
+  bool fileOk = recFile;
+  if (fileOk) { uint8_t zero[44] = {0}; recFile.write(zero, 44); }
+  xSemaphoreGive(sdMutex);
+  if (!fileOk) { toast("Помилка SD", "не створився файл"); return; }
+  if (!micStart()) {
+    xSemaphoreTake(sdMutex, portMAX_DELAY); recFile.close(); SD.remove(recPath); xSemaphoreGive(sdMutex);
+    toast("Мікрофон", "помилка I2S"); return;
+  }
+  xStreamBufferReset(recBuf);
   recLat = gpsFix() ? gps.location.lat() : NAN;
   recLon = gpsFix() ? gps.location.lng() : NAN;
   recording = true; recStart = millis(); recSamples = 0; recDc = 0;
+  recActive = true;
   char ev[160];
   snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str());
   mqttEvent(ev);
   Serial.printf("Запис %s\n", recPath);
 }
 
+// Переписати накопичене з recBuf на SD
+void recDrain() {
+  static uint8_t chunk[2048];
+  for (;;) {
+    size_t n = xStreamBufferReceive(recBuf, chunk, sizeof(chunk), 0);
+    if (!n) break;
+    xSemaphoreTake(sdMutex, portMAX_DELAY);
+    recFile.write(chunk, n);
+    xSemaphoreGive(sdMutex);
+    recSamples += n / 2;
+  }
+}
+
 void recPump() {
   if (!recording) return;
-  static int32_t raw[512];
-  static int16_t out[256];
-  size_t got = 0;
-  for (int k = 0; k < 4; k++) {                       // до 4 блоків за прохід
-    if (i2s_read(I2S_NUM_0, raw, sizeof(raw), &got, 0) != ESP_OK || got == 0) break;
-    size_t n = got / 4, m = 0;
-    for (size_t i = 0; i + 1 < n; i += 2) {           // 16 кГц -> 8 кГц (середнє пари)
-      int32_t s = ((raw[i] >> MIC_SHIFT) + (raw[i + 1] >> MIC_SHIFT)) / 2;
-      recDc += (s - recDc) / 64;                      // прибрати постійну складову
-      int32_t v = s - recDc;
-      out[m++] = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
-    }
-    recFile.write((uint8_t*)out, m * 2);
-    recSamples += m;
-  }
+  recDrain();
   if (millis() - recStart >= REC_MAX_MS) { recStopNote(); toast("Ліміт 60 с", "запис зупинено", 3000); }
 }
 
 void recStopNote() {
   if (!recording) { toast("Мікрофон вимкнено"); return; }
-  recording = false;
+  recActive = false;
+  while (!recTaskIdle) delay(2);                      // дочекатися, поки задача мікрофона відпустить I2S
   micStop();
+  recDrain();
+  recording = false;
   uint32_t bytes = recSamples * 2;
+  xSemaphoreTake(sdMutex, portMAX_DELAY);
   wavHeader(recFile, bytes);
   recFile.close();
+  xSemaphoreGive(sdMutex);
   int32_t dur = recSamples * 1000 / REC_RATE_OUT;
   mqttEvent("{\"type\":\"rec\",\"on\":false}");
-  if (dur < 500) { SD.remove(recPath); toast("Запис закороткий", "нотатку не збережено"); return; }
+  if (dur < 500) {
+    xSemaphoreTake(sdMutex, portMAX_DELAY); SD.remove(recPath); xSemaphoreGive(sdMutex);
+    toast("Запис закороткий", "нотатку не збережено"); return;
+  }
   // метадані поруч, щоб після перезапуску дослати
   String meta = String(recPath); meta.replace(".wav", ".txt");
+  xSemaphoreTake(sdMutex, portMAX_DELAY);
   File m = SD.open(meta, FILE_WRITE);
   if (m) { m.printf("%s,%s,%ld\n", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str(), (long)dur); m.close(); }
+  xSemaphoreGive(sdMutex);
   Job j{}; j.type = JOB_VOICE; j.lat = recLat; j.lon = recLon; j.durMs = dur; strlcpy(j.path, recPath, sizeof(j.path));
   queueJob(j);
   toast("Нотатку збережено", WiFi.status() == WL_CONNECTED ? "надсилаю на сайт..." : "надішлю, коли буде мережа", 3000);
@@ -609,8 +657,9 @@ void recStopNote() {
 
 // Нотатки, що не встигли піти до вимкнення
 void queuePendingNotes() {
+  xSemaphoreTake(sdMutex, portMAX_DELAY);
   File dir = SD.open("/rec");
-  if (!dir) { SD.mkdir("/rec"); return; }
+  if (!dir) { SD.mkdir("/rec"); xSemaphoreGive(sdMutex); return; }
   int n = 0;
   for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
     String name = String(f.path());
@@ -629,6 +678,7 @@ void queuePendingNotes() {
     queueJob(j); n++;
   }
   dir.close();
+  xSemaphoreGive(sdMutex);
   if (n) Serial.printf("Недоставлених нотаток: %d, надсилаю\n", n);
 }
 
@@ -851,6 +901,7 @@ void handleResults() {
         xSemaphoreTake(sosMutex, portMAX_DELAY);
         if (strcmp(prefs.getString("sos", "").c_str(), sosPhone) != 0) prefs.putString("sos", sosPhone);
         Serial.printf("Номер SOS з сайту: %s\n", sosPhone[0] ? sosPhone : "(не задано)");
+        diagDirty = true;
         xSemaphoreGive(sosMutex);
         break;
       case RES_HELLO_FAIL: Serial.println("device_hello не вдався (токен або міграція?)"); break;
@@ -893,6 +944,8 @@ void setup() {
   led(1, 1, 0);
   prefs.begin("rivnohid", false);
   sosMutex = xSemaphoreCreateMutex();
+  sdMutex = xSemaphoreCreateMutex();
+  recBuf = xStreamBufferCreate(32 * 1024, 1);          // ~2 с голосу про запас
   strlcpy(sosPhone, prefs.getString("sos", "").c_str(), sizeof(sosPhone));
   jobQ = xQueueCreate(12, sizeof(Job));
   resQ = xQueueCreate(12, sizeof(Result));
@@ -916,6 +969,7 @@ void setup() {
   if (sdOk && !SD.exists("/rec")) SD.mkdir("/rec");
 
   micProbe();
+  xTaskCreatePinnedToCore(micTask, "mic", 4096, nullptr, 3, nullptr, 1);
   gsmProbe();
   Serial1.begin(9600, SERIAL_8N1, PIN_GPS_RX, -1);
 
@@ -971,6 +1025,7 @@ void loop() {
     if (WiFi.status() == WL_CONNECTED) startOta();
     ensureMqtt();
     publishState();
+    publishDiag();
     if (millis() - lastHello > HELLO_EVERY_MS) { lastHello = millis(); Job h{}; h.type = JOB_HELLO; queueJob(h); }
   }
   mqtt.loop();
