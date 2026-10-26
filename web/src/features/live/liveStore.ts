@@ -1,4 +1,5 @@
 import {
+    type DeviceEvent,
     type Level,
     type LivePacket,
     levelOfRms,
@@ -11,11 +12,15 @@ import {
 export type LiveEvent = {
     id: number
     time: Date
-    kind: 'bump' | 'mark'
+    kind: 'bump' | 'mark' | 'voice' | 'sos' | 'marker'
     peak: number
     lat?: number
     lon?: number
+    noteId?: string
+    durMs?: number
 }
+
+export type SosAlert = { time: Date, lat?: number, lon?: number, called: boolean }
 
 export type TrackPoint = { lat: number, lon: number, rms: number, level: Level }
 
@@ -40,6 +45,10 @@ export class LiveStore {
     lon?: number
     lastPacketAt = 0
     version = 0
+    recording = false
+    roadMode = false
+    roadMarkers = 0
+    sos: SosAlert | null = null
 
     private secSq = 0
     private secN = 0
@@ -64,6 +73,8 @@ export class LiveStore {
         this.rms = Math.sqrt(this.rmsWindow.reduce((s, x) => s + x * x, 0) / this.rmsWindow.length)
         this.peak = Math.max(this.peak, p.pk ?? 0)
 
+        if (p.rec != null) this.recording = p.rec === 1
+        if (p.road != null) this.roadMode = p.road === 1
         this.speed = p.spd
         this.sat = p.sat
         this.bat = p.bat
@@ -98,6 +109,34 @@ export class LiveStore {
     private addEvent(kind: LiveEvent['kind'], p: LivePacket) {
         this.events.unshift({id: ++this.eventId, time: new Date(), kind, peak: p.pk ?? 0, lat: p.lat, lon: p.lon})
         if (this.events.length > 50) this.events.pop()
+    }
+
+    // Події з топіка event: запис голосу, нотатки, SOS, позначки доріг
+    handleEvent(e: DeviceEvent) {
+        const at = (lat?: number | null, lon?: number | null) => ({lat: lat ?? undefined, lon: lon ?? undefined})
+        switch (e.type) {
+            case 'rec':
+                this.recording = e.on
+                break
+            case 'road':
+                this.roadMode = e.on
+                break
+            case 'voice':
+                this.events.unshift({id: ++this.eventId, time: new Date(), kind: 'voice', peak: 0, ...at(e.lat, e.lon), noteId: e.id, durMs: e.dur})
+                break
+            case 'marker':
+                this.roadMarkers++
+                break
+            case 'sos':
+                this.sos = {time: new Date(), ...at(e.lat, e.lon), called: e.called}
+                this.events.unshift({id: ++this.eventId, time: new Date(), kind: 'sos', peak: 0, ...at(e.lat, e.lon)})
+                break
+            case 'sos_cancel':
+                this.sos = null
+                break
+        }
+        if (this.events.length > 50) this.events.pop()
+        this.version++
     }
 
     reset() {

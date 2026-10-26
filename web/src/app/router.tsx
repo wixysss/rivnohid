@@ -7,6 +7,7 @@ import {ProtectedOnlyRoute} from "../features/auth/routes/protectedOnlyRoute.tsx
 import {MapPage} from "../features/map/pages/mapPage.tsx";
 import {MapEditor} from "../features/map/pages/mapEditor.tsx";
 import {LivePage} from "../features/live/pages/livePage.tsx";
+import {SosSettingsPage} from "../features/sos/pages/sosSettingsPage.tsx";
 
 export const Router = () => {
     return (
@@ -26,6 +27,7 @@ export const Router = () => {
 
                 <Route element={<ProtectedOnlyRoute/>}>
                     <Route path='/map/editor' element={<MapEditor/>}/>
+                    <Route path='/settings/sos' element={<SosSettingsPage/>}/>
                 </Route>
             </Routes>
         </BrowserRouter>

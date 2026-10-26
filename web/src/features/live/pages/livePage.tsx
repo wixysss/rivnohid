@@ -6,13 +6,15 @@ import {WaveChart} from "../components/waveChart.tsx";
 import {RoadStrip} from "../components/roadStrip.tsx";
 import {EventList} from "../components/eventList.tsx";
 import {LiveTrackMap} from "../components/liveTrackMap.tsx";
-import {LEVELS} from "../constants.ts";
+import {type DeviceDiag, LEVELS} from "../constants.ts";
+import {SosBanner, SosMissingNotice} from "../components/sosBanner.tsx";
 
 const STATUS: Record<FeedStatus, { text: string, dot: string }> = {
     connecting: {text: 'Підключення до сервера…', dot: 'bg-zinc-400'},
     waiting: {text: 'Чекаю на пристрій…', dot: 'bg-yellow-400'},
     offline: {text: 'Пристрій вимкнений або без інтернету', dot: 'bg-zinc-400'},
     lowBattery: {text: 'Пристрій заснув: розряджений акумулятор', dot: 'bg-red-500'},
+    noSensor: {text: 'Пристрій онлайн, але акселерометр не відповідає: перевір дроти GY-521', dot: 'bg-red-500'},
     live: {text: 'Пристрій онлайн', dot: 'bg-green-500 animate-pulse'},
     demo: {text: 'Демо-дані', dot: 'bg-[#2a78d6]'},
 }
@@ -52,8 +54,24 @@ const Axis = ({labels}: { labels: string[] }) => (
     </div>
 )
 
+// Що підключено до пристрою (пристрій публікує після кожного підключення)
+const DiagRow = ({diag}: { diag: DeviceDiag }) => {
+    const items: [string, 0 | 1][] = [['Акселерометр', diag.mpu], ['Мікрофон', diag.mic], ['SD-картка', diag.sd],
+        ['Екран', diag.oled], ['SIM800L', diag.gsm], ['Номер SOS', diag.sos]]
+    return (
+        <div className='mb-4 flex flex-wrap items-center gap-2 text-xs text-zinc-600'>
+            <span>Пристрій v{diag.fw}{diag.ssid ? ` · ${diag.ssid}` : ''}:</span>
+            {items.map(([label, ok]) => (
+                <span key={label} className={`rounded-full px-2 py-0.5 ${ok ? 'bg-green-50 text-green-700' : 'bg-zinc-100 text-zinc-500 line-through'}`}>
+                    {label}
+                </span>
+            ))}
+        </div>
+    )
+}
+
 export const LivePage = () => {
-    const {store, status, demo, setDemo} = useLiveFeed()
+    const {store, status, demo, setDemo, diag} = useLiveFeed()
     const s = STATUS[status]
 
     return (
@@ -65,11 +83,25 @@ export const LivePage = () => {
                     <span className='flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-sm'>
                         <i className={`inline-block h-2.5 w-2.5 rounded-full ${s.dot}`}/>{s.text}
                     </span>
+                    {store.recording && (
+                        <span className='flex items-center gap-2 rounded-full bg-red-600 px-3 py-1 text-sm text-white'>
+                            <i className='inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-white'/>Йде запис голосу
+                        </span>
+                    )}
+                    {store.roadMode && (
+                        <span className='rounded-full border border-green-300 bg-green-50 px-3 py-1 text-sm text-green-800'>
+                            Карта доріг: вкл{store.roadMarkers ? ` · ${store.roadMarkers}` : ''}
+                        </span>
+                    )}
                     <button onClick={() => setDemo((d) => !d)}
                             className={`ml-auto rounded-lg px-4 py-1.5 text-sm ${demo ? 'bg-[#2a78d6] text-white' : 'border border-zinc-200 bg-white'}`}>
                         {demo ? 'Вимкнути демо' : 'Демо-режим'}
                     </button>
                 </div>
+
+                {store.sos && <SosBanner sos={store.sos} onDismiss={() => { store.sos = null }}/>}
+                <SosMissingNotice/>
+                {diag && <DiagRow diag={diag}/>}
 
                 <div className='grid gap-4 lg:grid-cols-[300px_1fr]'>
                     <div className='contents lg:flex lg:flex-col lg:gap-4'>

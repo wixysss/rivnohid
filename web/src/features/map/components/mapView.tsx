@@ -5,6 +5,7 @@ import {useMarkers} from "../hooks/useMarkers.ts";
 import {createIcon} from "../markerStyles.ts";
 import {MarkerPopup} from "./markerPopup.tsx";
 import * as React from "react";
+import {VoiceNoteLayer} from "../../voice/components/voiceNoteLayer.tsx";
 
 type MapViewProps = {
     children?: React.ReactNode
@@ -24,6 +25,8 @@ export const MapView = ({children}: MapViewProps) => {
                     </Popup>
                 </Marker>
             ))}
+
+            <VoiceNoteLayer/>
 
             {children}
         </MapContainer>
