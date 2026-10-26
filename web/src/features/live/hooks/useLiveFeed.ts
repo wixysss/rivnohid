@@ -4,7 +4,7 @@ import {MqttSubscriber} from "../mqttWs.ts";
 import {type LivePacket, MQTT_STATUS_TOPIC, MQTT_SUBSCRIBE, MQTT_TOPIC, MQTT_URL, OFFLINE_AFTER_MS} from "../constants.ts";
 import {startDemo} from "../demoSource.ts";
 
-export type FeedStatus = 'connecting' | 'waiting' | 'offline' | 'lowBattery' | 'live' | 'demo'
+export type FeedStatus = 'connecting' | 'waiting' | 'offline' | 'lowBattery' | 'noSensor' | 'live' | 'demo'
 
 // Підключення до пристрою через MQTT + демо-режим.
 // Дані лежать у LiveStore (ref), а React перемальовується ~5 разів на секунду.
@@ -49,7 +49,8 @@ export const useLiveFeed = () => {
             : !brokerUp ? 'connecting'
                 : deviceState === 'low_battery' ? 'lowBattery'
                     : deviceState === 'offline' ? 'offline'
-                        : 'waiting'
+                        : deviceState === 'no_sensor' || deviceState === 'sensor_error' ? 'noSensor'
+                            : 'waiting'
 
     return {store, status, demo, setDemo}
 }
