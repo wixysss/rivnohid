@@ -7,6 +7,7 @@ import {RoadStrip} from "../components/roadStrip.tsx";
 import {EventList} from "../components/eventList.tsx";
 import {LiveTrackMap} from "../components/liveTrackMap.tsx";
 import {LEVELS} from "../constants.ts";
+import {SosBanner, SosMissingNotice} from "../components/sosBanner.tsx";
 
 const STATUS: Record<FeedStatus, { text: string, dot: string }> = {
     connecting: {text: 'Підключення до сервера…', dot: 'bg-zinc-400'},
@@ -66,11 +67,24 @@ export const LivePage = () => {
                     <span className='flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-sm'>
                         <i className={`inline-block h-2.5 w-2.5 rounded-full ${s.dot}`}/>{s.text}
                     </span>
+                    {store.recording && (
+                        <span className='flex items-center gap-2 rounded-full bg-red-600 px-3 py-1 text-sm text-white'>
+                            <i className='inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-white'/>Йде запис голосу
+                        </span>
+                    )}
+                    {store.roadMode && (
+                        <span className='rounded-full border border-green-300 bg-green-50 px-3 py-1 text-sm text-green-800'>
+                            Карта доріг: вкл{store.roadMarkers ? ` · ${store.roadMarkers}` : ''}
+                        </span>
+                    )}
                     <button onClick={() => setDemo((d) => !d)}
                             className={`ml-auto rounded-lg px-4 py-1.5 text-sm ${demo ? 'bg-[#2a78d6] text-white' : 'border border-zinc-200 bg-white'}`}>
                         {demo ? 'Вимкнути демо' : 'Демо-режим'}
                     </button>
                 </div>
+
+                {store.sos && <SosBanner sos={store.sos} onDismiss={() => { store.sos = null }}/>}
+                <SosMissingNotice/>
 
                 <div className='grid gap-4 lg:grid-cols-[300px_1fr]'>
                     <div className='contents lg:flex lg:flex-col lg:gap-4'>

@@ -28,6 +28,7 @@ export const NavBar = () => {
                 <Link to='/map'>Map</Link>
                 <Link to='/map/editor'>Map editor</Link>
                 <Link to='/live'>Live</Link>
+                <Link to='/settings/sos' className='text-red-600'>SOS</Link>
 
                 <div className='cursor-pointer' onClick={() => setIsOpen((prev) => !prev)}><FiUser size={40}/></div>
 

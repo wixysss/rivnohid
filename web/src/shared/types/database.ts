@@ -1,4 +1,4 @@
-﻿export type Json =
+export type Json =
   | string
   | number
   | boolean
@@ -14,6 +14,99 @@ export type Database = {
   }
   public: {
     Tables: {
+      device_settings: {
+        Row: {
+          device_id: string
+          sos_name: string | null
+          sos_phone: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          device_id: string
+          sos_name?: string | null
+          sos_phone: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          device_id?: string
+          sos_name?: string | null
+          sos_phone?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      voice_notes: {
+        Row: {
+          audio: string
+          created_at: string
+          device_id: string | null
+          duration_ms: number | null
+          id: string
+          lat: number | null
+          lng: number | null
+          sample_rate: number
+        }
+        Insert: {
+          audio: string
+          created_at?: string
+          device_id?: string | null
+          duration_ms?: number | null
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          sample_rate?: number
+        }
+        Update: {
+          audio?: string
+          created_at?: string
+          device_id?: string | null
+          duration_ms?: number | null
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          sample_rate?: number
+        }
+        Relationships: []
+      }
+      sos_events: {
+        Row: {
+          called: boolean
+          created_at: string
+          device_id: string | null
+          id: string
+          lat: number | null
+          lng: number | null
+          phone: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+        }
+        Insert: {
+          called?: boolean
+          created_at?: string
+          device_id?: string | null
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          phone?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+        }
+        Update: {
+          called?: boolean
+          created_at?: string
+          device_id?: string | null
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          phone?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+        }
+        Relationships: []
+      }
       devices: {
         Row: {
           created_at: string
@@ -146,7 +239,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_sos_settings: {
+        Args: never
+        Returns: { sos_phone: string | null, sos_name: string | null, updated_at: string } | null
+      }
+      set_sos_settings: {
+        Args: { p_name: string, p_phone: string }
+        Returns: undefined
+      }
+      voice_note_audio: {
+        Args: { p_id: string }
+        Returns: string | null
+      }
     }
     Enums: {
       [_ in never]: never

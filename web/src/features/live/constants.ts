@@ -2,6 +2,7 @@
 export const MQTT_URL = 'wss://broker.hivemq.com:8884/mqtt'
 export const MQTT_TOPIC = 'rivnohid/rv7f3k/live'
 export const MQTT_STATUS_TOPIC = 'rivnohid/rv7f3k/status'   // online / offline / low_battery
+export const MQTT_EVENT_TOPIC = 'rivnohid/rv7f3k/event'      // запис голосу, нотатки, SOS, карта доріг
 export const MQTT_SUBSCRIBE = 'rivnohid/rv7f3k/#'
 
 export const SAMPLE_HZ = 200
@@ -43,4 +44,14 @@ export type LivePacket = {
     lon?: number
     spd?: number
     sat?: number
+    rec?: 0 | 1        // йде запис голосу
+    road?: 0 | 1       // увімкнено автопозначки стану доріг
 }
+
+export type DeviceEvent =
+    | { type: 'rec', on: boolean, lat?: number | null, lon?: number | null }
+    | { type: 'voice', id: string, lat: number | null, lon: number | null, dur: number }
+    | { type: 'sos', lat: number | null, lon: number | null, called: boolean }
+    | { type: 'sos_cancel' }
+    | { type: 'road', on: boolean }
+    | { type: 'marker', lat: number | null, lon: number | null }
