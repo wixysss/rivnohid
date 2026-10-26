@@ -127,6 +127,11 @@ int8_t   micSlot = I2S_STD_SLOT_LEFT;
 StreamBufferHandle_t recBuf;
 volatile bool recActive = false, recTaskIdle = true;
 SemaphoreHandle_t sdMutex;
+// Без SD-картки запис іде в RAM: 8 кГц, 8 біт, до ~8 с
+#define RAM_REC_MAX  (64 * 1024)
+bool     recToRam = false, ramFull = false;
+uint8_t* ramRec = nullptr;
+uint32_t ramCap = 0, ramLen = 0;
 
 // SOS
 char     sosPhone[24] = "";
@@ -147,6 +152,8 @@ struct Job {
   int32_t durMs;
   char    sev[8];
   char    path[32];
+  uint8_t* mem;        // нотатка в RAM (коли немає SD), звільняє netTask
+  uint32_t memLen;
   char    desc[48];
   bool    called;
 };
@@ -371,6 +378,11 @@ class B64Body : public Stream {
     b64Len = 4 * ((fileSize + 2) / 3);
     total = h.length() + b64Len + t.length();
   }
+  B64Body(const String& head, const uint8_t* m, size_t len, const String& tail) : h(head), t(tail), file(nullptr), mem(m) {
+    fileSize = len;
+    b64Len = 4 * ((fileSize + 2) / 3);
+    total = h.length() + b64Len + t.length();
+  }
   size_t total;
   int available() override { size_t r = total - pos; return r > 0x7fffffff ? 0x7fffffff : (int)r; }
   int read() override { char c; return readBytes(&c, 1) == 1 ? (uint8_t)c : -1; }
@@ -393,12 +405,15 @@ class B64Body : public Stream {
  private:
   String h, t;
   File* file;
-  size_t fileSize = 0, b64Len = 0, pos = 0, outLen = 0, outPos = 0;
+  const uint8_t* mem = nullptr;
+  size_t fileSize = 0, b64Len = 0, pos = 0, outLen = 0, outPos = 0, memPos = 0;
   char out[1024];
   void refill() {
     static const char* A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     uint8_t in[768];
-    size_t got = file->read(in, sizeof(in));
+    size_t got;
+    if (file) got = file->read(in, sizeof(in));
+    else { got = min(sizeof(in), fileSize - memPos); memcpy(in, mem + memPos, got); memPos += got; }
     outLen = 0; outPos = 0;
     for (size_t i = 0; i < got; i += 3) {
       uint32_t v = in[i] << 16;
@@ -491,6 +506,20 @@ void netTask(void*) {
       }
       sendResult(code == 200 ? RES_SOS_OK : RES_SOS_FAIL, "", j.lat, j.lon);
 
+    } else if (j.type == JOB_VOICE && j.mem) {         // нотатка з RAM
+      String head = "{" + tok + ",\"p_lat\":" + fmtCoord(j.lat) + ",\"p_lng\":" + fmtCoord(j.lon) +
+                    ",\"p_duration_ms\":" + String(j.durMs) + ",\"p_sample_rate\":" + String(REC_RATE_OUT) +
+                    ",\"p_audio_b64\":\"";
+      for (int attempt = 0; attempt < 3 && code != 200; attempt++) {
+        B64Body body(head, j.mem, j.memLen, "\"}");
+        Serial.printf("Надсилаю нотатку з RAM (%u байт)\n", (unsigned)j.memLen);
+        code = rpc("device_add_voice_note", &body, body.total, resp);
+        if (code != 200) vTaskDelay(pdMS_TO_TICKS(5000));
+      }
+      free(j.mem);
+      if (code == 200) sendResult(RES_VOICE_OK, jsonStr("{\"x\":" + resp + "}", "x"), j.lat, j.lon, j.durMs);
+      else { Serial.printf("Голос не надіслано: %d %s\n", code, resp.c_str()); sendResult(RES_VOICE_FAIL); }
+
     } else if (j.type == JOB_VOICE) {
       while (recording) vTaskDelay(pdMS_TO_TICKS(500));   // не заважаємо новому запису
       xSemaphoreTake(sdMutex, portMAX_DELAY);           // SD не можна читати з двох задач одночасно
@@ -569,20 +598,45 @@ void micTask(void*) {
   }
 }
 
-void wavHeader(File& f, uint32_t dataBytes) {
-  uint8_t h[44];
+void wavHeaderBytes(uint8_t* h, uint32_t dataBytes, uint16_t bits) {
   auto w32 = [&](int o, uint32_t v) { h[o] = v; h[o + 1] = v >> 8; h[o + 2] = v >> 16; h[o + 3] = v >> 24; };
   auto w16 = [&](int o, uint16_t v) { h[o] = v; h[o + 1] = v >> 8; };
+  uint16_t blockAlign = bits / 8;
   memcpy(h, "RIFF", 4); w32(4, 36 + dataBytes); memcpy(h + 8, "WAVEfmt ", 8);
-  w32(16, 16); w16(20, 1); w16(22, 1); w32(24, REC_RATE_OUT); w32(28, REC_RATE_OUT * 2); w16(32, 2); w16(34, 16);
+  w32(16, 16); w16(20, 1); w16(22, 1); w32(24, REC_RATE_OUT); w32(28, REC_RATE_OUT * blockAlign); w16(32, blockAlign); w16(34, bits);
   memcpy(h + 36, "data", 4); w32(40, dataBytes);
+}
+
+void wavHeader(File& f, uint32_t dataBytes) {
+  uint8_t h[44];
+  wavHeaderBytes(h, dataBytes, 16);
   f.seek(0); f.write(h, 44);
 }
 
 void recStartNote() {
   if (recording) { toast("Вже записую", "Стоп: кнопка 2"); return; }
-  if (!sdOk) { toast("Немає SD-картки", "запис неможливий"); return; }
   if (!micOk) { toast("Мікрофон", "не відповідає"); return; }
+  if (!sdOk) {
+    // Без SD: короткий запис у RAM
+    if (voiceInFlight > 0) { toast("Зачекай кілька с", "надсилаю нотатку..."); return; }
+    uint32_t avail = ESP.getMaxAllocHeap();
+    ramCap = avail > 60000 + 16000 ? min((uint32_t)RAM_REC_MAX, avail - 60000) : 0;   // 60 КБ лишаємо для HTTPS
+    ramRec = ramCap ? (uint8_t*)malloc(ramCap) : nullptr;
+    if (!ramRec) { toast("Мало пам'яті", "встав SD-картку"); return; }
+    ramLen = 44; ramFull = false; recToRam = true;
+    if (!micStart()) { free(ramRec); ramRec = nullptr; toast("Мікрофон", "помилка I2S"); return; }
+    xStreamBufferReset(recBuf);
+    recLat = gpsFix() ? gps.location.lat() : NAN;
+    recLon = gpsFix() ? gps.location.lng() : NAN;
+    recording = true; recStart = millis(); recSamples = 0; recDc = 0;
+    recActive = true;
+    char ev[160];
+    snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str());
+    mqttEvent(ev);
+    Serial.printf("Запис у RAM, до %lu с\n", (unsigned long)((ramCap - 44) / REC_RATE_OUT));
+    return;
+  }
+  recToRam = false;
   uint32_t n = prefs.getUInt("recN", 0) + 1; prefs.putUInt("recN", n);
   snprintf(recPath, sizeof(recPath), "/rec/%05lu.wav", (unsigned long)n);
   // Якщо саме надсилається попередня нотатка (SD зайнята), не чекаємо, щоб не завис пристрій
@@ -610,6 +664,21 @@ void recStartNote() {
 // Переписати накопичене з recBuf на SD
 void recDrain() {
   static uint8_t chunk[2048];
+  if (recToRam) {
+    for (;;) {
+      size_t n = xStreamBufferReceive(recBuf, chunk, sizeof(chunk), 0);
+      if (!n) break;
+      int16_t* s16 = (int16_t*)chunk;
+      for (size_t i = 0; i < n / 2; i++) {
+        if (ramLen >= ramCap) { ramFull = true; break; }
+        int v = s16[i] >> 5;                                  // голос тихий: +8x відносно простого >>8
+        v = v > 127 ? 127 : v < -128 ? -128 : v;
+        ramRec[ramLen++] = (uint8_t)(v + 128);                // 8 біт без знака
+      }
+    }
+    recSamples = ramLen - 44;
+    return;
+  }
   for (;;) {
     size_t n = xStreamBufferReceive(recBuf, chunk, sizeof(chunk), 0);
     if (!n) break;
@@ -623,6 +692,7 @@ void recDrain() {
 void recPump() {
   if (!recording) return;
   recDrain();
+  if (recToRam && ramFull) { recStopNote(); toast("Ліміт без SD-картки", "нотатку надсилаю", 3000); return; }
   if (millis() - recStart >= REC_MAX_MS) { recStopNote(); toast("Ліміт 60 с", "запис зупинено", 3000); }
 }
 
@@ -633,6 +703,20 @@ void recStopNote() {
   micStop();
   recDrain();
   recording = false;
+  if (recToRam) {
+    recToRam = false;
+    uint32_t bytes = ramLen - 44;
+    int32_t dur = bytes * 1000 / REC_RATE_OUT;
+    mqttEvent("{\"type\":\"rec\",\"on\":false}");
+    if (dur < 500) { free(ramRec); ramRec = nullptr; toast("Запис закороткий", "нотатку не збережено"); return; }
+    wavHeaderBytes(ramRec, bytes, 8);
+    Job j{}; j.type = JOB_VOICE; j.lat = recLat; j.lon = recLon; j.durMs = dur; j.mem = ramRec; j.memLen = ramLen;
+    ramRec = nullptr;                                 // тепер буфером володіє netTask
+    if (xQueueSend(jobQ, &j, 0) != pdTRUE) { free(j.mem); toast("Черга повна", "нотатку втрачено"); return; }
+    voiceInFlight++;
+    toast("Нотатку записано", WiFi.status() == WL_CONNECTED ? "надсилаю на сайт..." : "надішлю, коли буде мережа", 3000);
+    return;
+  }
   uint32_t bytes = recSamples * 2;
   xSemaphoreTake(sdMutex, portMAX_DELAY);
   wavHeader(recFile, bytes);
@@ -826,7 +910,7 @@ void drawScreen() {
     uint32_t s = (millis() - recStart) / 1000;
     char t[24]; snprintf(t, sizeof(t), "%lu:%02lu", (unsigned long)(s / 60), (unsigned long)(s % 60));
     l1 = String((millis() / 500) % 2 ? "* " : "  ") + "Запис голосу " + t;
-    l2 = "Стоп: кнопка 2";
+    l2 = recToRam ? "Стоп: 2 (макс " + String((ramCap - 44) / REC_RATE_OUT) + " с)" : String("Стоп: кнопка 2");
   } else if (millis() < toastUntil) {
     l1 = toast1; l2 = toast2;
   } else {
