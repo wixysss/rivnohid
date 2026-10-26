@@ -47,7 +47,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "2.1"
+#define FW_VERSION "2.3"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -124,8 +124,8 @@ int32_t  recDc = 0;
 int8_t   micSlot = I2S_STD_SLOT_LEFT;
 // Мікрофон читає окрема задача і складає відліки (8 кГц, 16 біт) у буфер,
 // а loop() переписує їх на SD. Так екран, мережа й SD не гублять звук.
-StreamBufferHandle_t recBuf;
-volatile bool recActive = false, recTaskIdle = true;
+StreamBufferHandle_t recBuf = nullptr;   // створюється лише на час запису (звільняє RAM для HTTPS)
+volatile bool recActive = false, recTaskIdle = true, recDcInit = false;
 SemaphoreHandle_t sdMutex;
 // Без SD-картки запис іде в RAM: 8 кГц, 8 біт, до ~8 с
 #define RAM_REC_MAX  (64 * 1024)
@@ -176,7 +176,15 @@ void toast(const String& a, const String& b = "", uint32_t ms = 2500) {
   Serial.printf("[екран] %s | %s\n", a.c_str(), b.c_str());
 }
 
-bool gpsFix() { return gps.location.isValid() && gps.location.age() < 3000; }
+// GPS-фікс, якому можна вірити. В Україні сигнал часто підміняють (РЕБ):
+// приймаємо лише координати в межах України, з ≥4 супутниками й нормальною точністю.
+bool gpsFix() {
+  if (!gps.location.isValid() || gps.location.age() >= 3000) return false;
+  if (gps.satellites.isValid() && gps.satellites.value() < 4) return false;
+  if (gps.hdop.isValid() && gps.hdop.hdop() > 5.0) return false;
+  double la = gps.location.lat(), lo = gps.location.lng();
+  return la > 44.0 && la < 52.5 && lo > 22.0 && lo < 40.5;
+}
 
 float batteryV() { return analogRead(PIN_BATT) / 4095.0f * 3.3f * 2.0f; }
 
@@ -438,6 +446,12 @@ int rpc(const char* fn, Stream* body, size_t len, String& resp) {
   http.addHeader("Content-Type", "application/json");
   int code = http.sendRequest("POST", body, len);
   resp = http.getString();
+  if (code < 0) {
+    char err[100] = "";
+    cli.lastError(err, sizeof(err));
+    Serial.printf("HTTPS помилка %d (%s), TLS: %s, вільно %u, найбільший блок %u\n", code, http.errorToString(code).c_str(),
+                  err, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  }
   http.end();
   return code;
 }
@@ -528,9 +542,12 @@ void netTask(void*) {
       String head = "{" + tok + ",\"p_lat\":" + fmtCoord(j.lat) + ",\"p_lng\":" + fmtCoord(j.lon) +
                     ",\"p_duration_ms\":" + String(j.durMs) + ",\"p_sample_rate\":" + String(REC_RATE_OUT) +
                     ",\"p_audio_b64\":\"";
-      B64Body body(head, &f, "\"}");
-      Serial.printf("Надсилаю %s (%u байт)\n", j.path, (unsigned)f.size());
-      code = rpc("device_add_voice_note", &body, body.total, resp);
+      Serial.printf("Надсилаю %s (%u байт), вільно %u, блок %u\n", j.path, (unsigned)f.size(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      for (int attempt = 0; attempt < 3 && code != 200; attempt++) {
+        if (attempt) { f.seek(0); xSemaphoreGive(sdMutex); vTaskDelay(pdMS_TO_TICKS(4000)); xSemaphoreTake(sdMutex, portMAX_DELAY); }
+        B64Body body(head, &f, "\"}");
+        code = rpc("device_add_voice_note", &body, body.total, resp);
+      }
       f.close();
       if (code == 200) { SD.remove(j.path); String meta = String(j.path); meta.replace(".wav", ".txt"); SD.remove(meta); }
       xSemaphoreGive(sdMutex);
@@ -590,6 +607,7 @@ void micTask(void*) {
     size_t n = got / 4, m = 0;
     for (size_t i = 0; i + 1 < n; i += 2) {           // середнє пари = 8 кГц
       int32_t v = ((raw[i] >> MIC_SHIFT) + (raw[i + 1] >> MIC_SHIFT)) / 2;
+      if (!recDcInit) { recDc = v; recDcInit = true; }  // старт фільтра з першого відліку, без клацання
       recDc += (v - recDc) / 64;                      // прибрати постійну складову
       v -= recDc;
       out[m++] = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
@@ -624,11 +642,12 @@ void recStartNote() {
     ramRec = ramCap ? (uint8_t*)malloc(ramCap) : nullptr;
     if (!ramRec) { toast("Мало пам'яті", "встав SD-картку"); return; }
     ramLen = 44; ramFull = false; recToRam = true;
-    if (!micStart()) { free(ramRec); ramRec = nullptr; toast("Мікрофон", "помилка I2S"); return; }
-    xStreamBufferReset(recBuf);
+    recBuf = xStreamBufferCreate(8 * 1024, 1);
+    if (!recBuf) { free(ramRec); ramRec = nullptr; recToRam = false; toast("Мало пам'яті", "встав SD-картку"); return; }
+    if (!micStart()) { vStreamBufferDelete(recBuf); recBuf = nullptr; free(ramRec); ramRec = nullptr; recToRam = false; toast("Мікрофон", "помилка I2S"); return; }
     recLat = gpsFix() ? gps.location.lat() : NAN;
     recLon = gpsFix() ? gps.location.lng() : NAN;
-    recording = true; recStart = millis(); recSamples = 0; recDc = 0;
+    recording = true; recStart = millis(); recSamples = 0; recDc = 0; recDcInit = false;
     recActive = true;
     char ev[160];
     snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str());
@@ -646,14 +665,15 @@ void recStartNote() {
   if (fileOk) { uint8_t zero[44] = {0}; recFile.write(zero, 44); }
   xSemaphoreGive(sdMutex);
   if (!fileOk) { toast("Помилка SD", "не створився файл"); return; }
-  if (!micStart()) {
+  recBuf = xStreamBufferCreate(16 * 1024, 1);         // ~1 с запасу
+  if (!recBuf || !micStart()) {
+    if (recBuf) { vStreamBufferDelete(recBuf); recBuf = nullptr; }
     xSemaphoreTake(sdMutex, portMAX_DELAY); recFile.close(); SD.remove(recPath); xSemaphoreGive(sdMutex);
-    toast("Мікрофон", "помилка I2S"); return;
+    toast("Мікрофон", "помилка запуску"); return;
   }
-  xStreamBufferReset(recBuf);
   recLat = gpsFix() ? gps.location.lat() : NAN;
   recLon = gpsFix() ? gps.location.lng() : NAN;
-  recording = true; recStart = millis(); recSamples = 0; recDc = 0;
+  recording = true; recStart = millis(); recSamples = 0; recDc = 0; recDcInit = false;
   recActive = true;
   char ev[160];
   snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str());
@@ -703,6 +723,7 @@ void recStopNote() {
   micStop();
   recDrain();
   recording = false;
+  vStreamBufferDelete(recBuf); recBuf = nullptr;
   if (recToRam) {
     recToRam = false;
     uint32_t bytes = ramLen - 44;
@@ -1029,7 +1050,6 @@ void setup() {
   prefs.begin("rivnohid", false);
   sosMutex = xSemaphoreCreateMutex();
   sdMutex = xSemaphoreCreateMutex();
-  recBuf = xStreamBufferCreate(32 * 1024, 1);          // ~2 с голосу про запас
   strlcpy(sosPhone, prefs.getString("sos", "").c_str(), sizeof(sosPhone));
   jobQ = xQueueCreate(12, sizeof(Job));
   resQ = xQueueCreate(12, sizeof(Result));
