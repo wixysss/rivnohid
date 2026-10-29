@@ -47,7 +47,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "2.4"
+#define FW_VERSION "2.5"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -808,12 +808,24 @@ bool gsmCmd(const char* cmd, const char* expect, uint32_t ms, String* out = null
   return ok;
 }
 
+// Кожен виклик пробує наступний варіант: звичайні або переплутані TX/RX, 9600 або 115200 бод.
+// Знайдений варіант запам'ятовується в NVS.
 void gsmProbe() {
-  static bool uartStarted = false;
-  if (!uartStarted) { Serial2.begin(9600, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX); uartStarted = true; }
+  static const struct { int8_t rx, tx; uint32_t baud; } V[] = {
+    {PIN_GSM_RX, PIN_GSM_TX, 9600}, {PIN_GSM_TX, PIN_GSM_RX, 9600},
+    {PIN_GSM_RX, PIN_GSM_TX, 115200}, {PIN_GSM_TX, PIN_GSM_RX, 115200},
+  };
+  static int v = -1;
+  if (v < 0) v = constrain((int)prefs.getUChar("gsmV", 0), 0, 3);
+  else v = (v + 1) % 4;
+  Serial2.end();
+  Serial2.begin(V[v].baud, SERIAL_8N1, V[v].rx, V[v].tx);
+  delay(20);
   for (int i = 0; i < 2 && !gsmOk; i++) gsmOk = gsmCmd("AT", "OK", 300);   // кілька AT — для автопідбору швидкості
-  if (!gsmOk) return;
-  Serial.println("SIM800L: знайдено");
+  if (!gsmOk) { Serial.printf("SIM800L: немає відповіді (RX=%d TX=%d %lu бод)\n", V[v].rx, V[v].tx, (unsigned long)V[v].baud); return; }
+  Serial.printf("SIM800L: знайдено (RX=%d TX=%d %lu бод)%s\n", V[v].rx, V[v].tx, (unsigned long)V[v].baud,
+                v % 2 ? " — дроти TX/RX переплутані, але працює" : "");
+  if (prefs.getUChar("gsmV", 0) != v) prefs.putUChar("gsmV", v);
   gsmCmd("ATE0", "OK", 500);
   gsmCmd("AT+CMGF=1", "OK", 1000);          // SMS текстом
   gsmCmd("AT+CSCS=\"GSM\"", "OK", 1000);
@@ -855,7 +867,7 @@ void gsmPoll() {
     return;
   }
   if (recording) return;
-  uint32_t every = gsmOk ? 30000 : 10000;
+  uint32_t every = gsmOk ? 30000 : 5000;
   if (millis() - last < every) return;
   last = millis();
   if (!gsmOk) gsmProbe();
