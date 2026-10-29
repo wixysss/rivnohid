@@ -47,7 +47,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "2.6"
+#define FW_VERSION "2.7"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -823,7 +823,7 @@ void gsmProbe() {
   Serial2.begin(baud, SERIAL_8N1, rx, tx);
   delay(20);
   String raw;
-  for (int i = 0; i < 3 && !gsmOk; i++) { gsmOk = gsmCmd("AT", "OK", 300, &raw); }   // кілька AT — для автопідбору швидкості
+  for (int i = 0; i < 2 && !gsmOk; i++) { gsmOk = gsmCmd("AT", "OK", 150, &raw); }   // 2 AT для автопідбору швидкості; ≤300 мс, щоб FIFO акселерометра (0.85 с) не переповнився
   if (!gsmOk) {
     Serial.printf("SIM800L: немає відповіді (RX=%d TX=%d %lu бод)", rx, tx, (unsigned long)baud);
     if (raw.length()) {
@@ -877,10 +877,12 @@ void gsmPoll() {
     return;
   }
   if (recording) return;
-  uint32_t every = gsmOk ? 30000 : 5000;
+  // Модем не знайдено: перші 10 спроб (усі варіанти) раз на 5 с, далі раз на хвилину — пристрій може працювати й без SIM800L
+  static uint8_t misses = 0;
+  uint32_t every = gsmOk ? 30000 : (misses < 10 ? 5000 : 60000);
   if (millis() - last < every) return;
   last = millis();
-  if (!gsmOk) gsmProbe();
+  if (!gsmOk) { gsmProbe(); misses = gsmOk ? 0 : (misses < 255 ? misses + 1 : misses); }
   if (gsmOk) gsmStatus();
 }
 
