@@ -47,7 +47,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "2.5"
+#define FW_VERSION "2.6"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -808,22 +808,32 @@ bool gsmCmd(const char* cmd, const char* expect, uint32_t ms, String* out = null
   return ok;
 }
 
-// Кожен виклик пробує наступний варіант: звичайні або переплутані TX/RX, 9600 або 115200 бод.
-// Знайдений варіант запам'ятовується в NVS.
+// Кожен виклик пробує наступний варіант: звичайні або переплутані TX/RX і 5 швидкостей.
+// Знайдений варіант запам'ятовується в NVS. Якщо модем щось шле, але не "OK", —
+// друкуємо сирі байти: значить дроти є, а швидкість чи рівні не ті.
 void gsmProbe() {
-  static const struct { int8_t rx, tx; uint32_t baud; } V[] = {
-    {PIN_GSM_RX, PIN_GSM_TX, 9600}, {PIN_GSM_TX, PIN_GSM_RX, 9600},
-    {PIN_GSM_RX, PIN_GSM_TX, 115200}, {PIN_GSM_TX, PIN_GSM_RX, 115200},
-  };
+  static const uint32_t B[] = {9600, 115200, 57600, 38400, 19200};
+  const int N = 10;
   static int v = -1;
-  if (v < 0) v = constrain((int)prefs.getUChar("gsmV", 0), 0, 3);
-  else v = (v + 1) % 4;
+  if (v < 0) v = constrain((int)prefs.getUChar("gsmV", 0), 0, N - 1);
+  else v = (v + 1) % N;
+  int8_t rx = v % 2 ? PIN_GSM_TX : PIN_GSM_RX, tx = v % 2 ? PIN_GSM_RX : PIN_GSM_TX;
+  uint32_t baud = B[v / 2];
   Serial2.end();
-  Serial2.begin(V[v].baud, SERIAL_8N1, V[v].rx, V[v].tx);
+  Serial2.begin(baud, SERIAL_8N1, rx, tx);
   delay(20);
-  for (int i = 0; i < 2 && !gsmOk; i++) gsmOk = gsmCmd("AT", "OK", 300);   // кілька AT — для автопідбору швидкості
-  if (!gsmOk) { Serial.printf("SIM800L: немає відповіді (RX=%d TX=%d %lu бод)\n", V[v].rx, V[v].tx, (unsigned long)V[v].baud); return; }
-  Serial.printf("SIM800L: знайдено (RX=%d TX=%d %lu бод)%s\n", V[v].rx, V[v].tx, (unsigned long)V[v].baud,
+  String raw;
+  for (int i = 0; i < 3 && !gsmOk; i++) { gsmOk = gsmCmd("AT", "OK", 300, &raw); }   // кілька AT — для автопідбору швидкості
+  if (!gsmOk) {
+    Serial.printf("SIM800L: немає відповіді (RX=%d TX=%d %lu бод)", rx, tx, (unsigned long)baud);
+    if (raw.length()) {
+      Serial.printf(" — але прийшло %d байт:", raw.length());
+      for (int i = 0; i < (int)raw.length() && i < 12; i++) Serial.printf(" %02X", (uint8_t)raw[i]);
+    }
+    Serial.println();
+    return;
+  }
+  Serial.printf("SIM800L: знайдено (RX=%d TX=%d %lu бод)%s\n", rx, tx, (unsigned long)baud,
                 v % 2 ? " — дроти TX/RX переплутані, але працює" : "");
   if (prefs.getUChar("gsmV", 0) != v) prefs.putUChar("gsmV", v);
   gsmCmd("ATE0", "OK", 500);
