@@ -5,7 +5,10 @@ export const MQTT_STATUS_TOPIC = 'rivnohid/rv7f3k/status'   // online / offline 
 export const MQTT_EVENT_TOPIC = 'rivnohid/rv7f3k/event'      // запис голосу, нотатки, SOS, карта доріг
 export const MQTT_DIAG_TOPIC = 'rivnohid/rv7f3k/diag'        // що підключено до пристрою (retained)
 
-export type DeviceDiag = { fw: string, sd: 0 | 1, mic: 0 | 1, oled: 0 | 1, gsm: 0 | 1, mpu: 0 | 1, sos: 0 | 1, ssid?: string, ip?: string }
+export type DeviceDiag = {
+    fw: string, sd: 0 | 1, mic: 0 | 1, oled: 0 | 1, gsm: 0 | 1, mpu: 0 | 1, sos: 0 | 1, ssid?: string, ip?: string
+    sim?: 0 | 1, reg?: 0 | 1, csq?: number   // SIM800L: SIM-картка, реєстрація в мережі, сигнал 0..31 (99 = невідомо)
+}
 export const MQTT_SUBSCRIBE = 'rivnohid/rv7f3k/#'
 
 export const SAMPLE_HZ = 200

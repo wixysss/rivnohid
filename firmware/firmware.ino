@@ -47,7 +47,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "2.3"
+#define FW_VERSION "2.4"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -97,6 +97,9 @@ const size_t WIFI_COUNT = sizeof(WIFI_NETWORKS) / sizeof(WIFI_NETWORKS[0]);
 // ---------------- Стан ----------------
 uint8_t  MPU_ADDR = 0x68;
 bool     sensorOk = false, oledOk = false, sdOk = false, gsmOk = false, micOk = false;
+// SIM800L: чи є SIM, чи зареєстрований у мережі, рівень сигналу 0..31 (99 = невідомо)
+bool     gsmSim = false, gsmReg = false;
+int      gsmCsq = 99;
 bool     otaStarted = false, otaActive = false;
 float    gx0, gy0, gz0, gMag;
 int16_t  batchBuf[BATCH];
@@ -364,8 +367,8 @@ void publishDiag() {
   xSemaphoreTake(sosMutex, portMAX_DELAY); phoneSet = sosPhone[0] ? 1 : 0; xSemaphoreGive(sosMutex);
   char js[256];
   snprintf(js, sizeof(js),
-           "{\"fw\":\"%s\",\"sd\":%d,\"mic\":%d,\"oled\":%d,\"gsm\":%d,\"mpu\":%d,\"sos\":%d,\"ssid\":\"%s\",\"ip\":\"%s\"}",
-           FW_VERSION, sdOk, micOk, oledOk, gsmOk, sensorOk, phoneSet,
+           "{\"fw\":\"%s\",\"sd\":%d,\"mic\":%d,\"oled\":%d,\"gsm\":%d,\"sim\":%d,\"reg\":%d,\"csq\":%d,\"mpu\":%d,\"sos\":%d,\"ssid\":\"%s\",\"ip\":\"%s\"}",
+           FW_VERSION, sdOk, micOk, oledOk, gsmOk, gsmSim, gsmReg, gsmCsq, sensorOk, phoneSet,
            WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
   if (mqtt.publish(MQTT_DIAG, js, true)) diagDirty = false;
 }
@@ -790,22 +793,73 @@ void queuePendingNotes() {
 // =====================================================================
 //                                 SOS
 // =====================================================================
-bool gsmCmd(const char* cmd, const char* expect, uint32_t ms) {
+// Надіслати AT-команду й дочекатися потрібної відповіді; повну відповідь кладе в out
+bool gsmCmd(const char* cmd, const char* expect, uint32_t ms, String* out = nullptr) {
   if (cmd[0]) { while (Serial2.available()) Serial2.read(); Serial2.println(cmd); }
   String r; uint32_t t0 = millis();
+  bool ok = false;
   while (millis() - t0 < ms) {
     while (Serial2.available()) r += (char)Serial2.read();
-    if (r.indexOf(expect) >= 0) return true;
-    delay(10);
+    if (r.indexOf(expect) >= 0) { ok = true; break; }
+    if (r.indexOf("ERROR") >= 0) break;
+    delay(5);
   }
-  return false;
+  if (out) *out = r;
+  return ok;
 }
 
 void gsmProbe() {
-  Serial2.begin(9600, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX);
-  for (int i = 0; i < 3 && !gsmOk; i++) gsmOk = gsmCmd("AT", "OK", 500);
-  Serial.println(gsmOk ? "SIM800L: є" : "SIM800L: не підключений (SOS піде лише на сайт)");
-  if (gsmOk) { gsmCmd("ATE0", "OK", 500); gsmCmd("AT+CMGF=1", "OK", 1000); }
+  static bool uartStarted = false;
+  if (!uartStarted) { Serial2.begin(9600, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX); uartStarted = true; }
+  for (int i = 0; i < 2 && !gsmOk; i++) gsmOk = gsmCmd("AT", "OK", 300);   // кілька AT — для автопідбору швидкості
+  if (!gsmOk) return;
+  Serial.println("SIM800L: знайдено");
+  gsmCmd("ATE0", "OK", 500);
+  gsmCmd("AT+CMGF=1", "OK", 1000);          // SMS текстом
+  gsmCmd("AT+CSCS=\"GSM\"", "OK", 1000);
+  diagDirty = true;
+}
+
+// Стан SIM800L: SIM, мережа, сигнал. Кожна команда відповідає за ~50 мс.
+void gsmStatus() {
+  String r;
+  bool sim = gsmCmd("AT+CPIN?", "OK", 500, &r) && r.indexOf("READY") >= 0;
+  bool reg = false;
+  if (gsmCmd("AT+CREG?", "OK", 500, &r)) {
+    int i = r.indexOf("+CREG:");
+    if (i >= 0) { int c = r.indexOf(',', i); int st = c > 0 ? r.substring(c + 1).toInt() : 0; reg = st == 1 || st == 5; }
+  }
+  int csq = 99;
+  if (gsmCmd("AT+CSQ", "OK", 500, &r)) {
+    int i = r.indexOf("+CSQ:");
+    if (i >= 0) csq = r.substring(i + 5).toInt();
+  }
+  if (r.length() == 0 && !sim) { gsmOk = false; Serial.println("SIM800L: зник"); diagDirty = true; return; }
+  if (sim != gsmSim || reg != gsmReg || abs(csq - gsmCsq) >= 3) {
+    Serial.printf("SIM800L: SIM=%s, мережа=%s, сигнал=%d/31\n", sim ? "OK" : "немає/PIN", reg ? "так" : "ні", csq);
+    diagDirty = true;
+  }
+  gsmSim = sim; gsmReg = reg; gsmCsq = csq;
+}
+
+// Викликається з loop(): шукає модем, оновлює стан, ловить кінець дзвінка
+void gsmPoll() {
+  static uint32_t last = 0;
+  if (sosCalling) {                                   // під час дзвінка лише слухаємо
+    static String buf;
+    while (Serial2.available()) buf += (char)Serial2.read();
+    if (buf.indexOf("NO CARRIER") >= 0 || buf.indexOf("BUSY") >= 0 || buf.indexOf("NO ANSWER") >= 0) {
+      sosCalling = false; Serial.println("SOS: дзвінок завершено");
+    }
+    if (buf.length() > 200) buf = buf.substring(buf.length() - 50);
+    return;
+  }
+  if (recording) return;
+  uint32_t every = gsmOk ? 30000 : 10000;
+  if (millis() - last < every) return;
+  last = millis();
+  if (!gsmOk) gsmProbe();
+  if (gsmOk) gsmStatus();
 }
 
 void triggerSos() {
@@ -817,7 +871,7 @@ void triggerSos() {
   bool called = false;
 
   sosShownUntil = millis() + 15000;
-  if (gsmOk && phone[0]) {
+  if (gsmOk && gsmReg && phone[0]) {
     String sms = String("SOS Rivnohid! ") + (isnan(lat) ? String("Koordynat nemaye") :
                  String("https://maps.google.com/?q=") + String(lat, 6) + "," + String(lon, 6));
     if (gsmCmd((String("AT+CMGS=\"") + phone + "\"").c_str(), ">", 3000)) {
@@ -926,7 +980,7 @@ void drawScreen() {
     String ph = sosPhone; xSemaphoreGive(sosMutex);
     if (sosCalling) l2 = "Дзвоню " + ph;
     else if (!ph.length()) l2 = "Номер не задано!";
-    else l2 = gsmOk ? "Не вдалося подзвонити" : "Надіслано на сайт";
+    else l2 = !gsmOk ? "Надіслано на сайт" : !gsmReg ? "Немає мережі GSM" : "Не вдалося подзвонити";
   } else if (recording) {
     uint32_t s = (millis() - recStart) / 1000;
     char t[24]; snprintf(t, sizeof(t), "%lu:%02lu", (unsigned long)(s / 60), (unsigned long)(s % 60));
@@ -1074,7 +1128,8 @@ void setup() {
 
   micProbe();
   xTaskCreatePinnedToCore(micTask, "mic", 4096, nullptr, 3, nullptr, 1);
-  gsmProbe();
+  gsmProbe();                                          // якщо модем ще прокидається, gsmPoll() знайде його пізніше
+  if (gsmOk) gsmStatus();
   Serial1.begin(9600, SERIAL_8N1, PIN_GPS_RX, -1);
 
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
@@ -1135,6 +1190,7 @@ void loop() {
   mqtt.loop();
   handleResults();
   retryFailedNotes();
+  gsmPoll();
   drawScreen();
 
   // Світлодіод

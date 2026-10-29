@@ -57,7 +57,12 @@ const Axis = ({labels}: { labels: string[] }) => (
 // Що підключено до пристрою (пристрій публікує після кожного підключення)
 const DiagRow = ({diag}: { diag: DeviceDiag }) => {
     const items: [string, 0 | 1][] = [['Акселерометр', diag.mpu], ['Мікрофон', diag.mic], ['SD-картка', diag.sd],
-        ['Екран', diag.oled], ['SIM800L', diag.gsm], ['Номер SOS', diag.sos]]
+        ['Екран', diag.oled], ['Номер SOS', diag.sos]]
+    // SIM800L: знайдено → SIM → мережа → сигнал
+    const gsm = !diag.gsm ? {text: 'SIM800L', cls: 'bg-zinc-100 text-zinc-500 line-through'}
+        : diag.sim === 0 ? {text: 'SIM800L: немає SIM або PIN', cls: 'bg-amber-50 text-amber-700'}
+            : diag.reg === 0 ? {text: 'SIM800L: шукає мережу', cls: 'bg-amber-50 text-amber-700'}
+                : {text: `SIM800L${diag.csq != null && diag.csq !== 99 ? ` · сигнал ${diag.csq}/31` : ''}`, cls: 'bg-green-50 text-green-700'}
     return (
         <div className='mb-4 flex flex-wrap items-center gap-2 text-xs text-zinc-600'>
             <span>Пристрій v{diag.fw}{diag.ssid ? ` · ${diag.ssid}` : ''}:</span>
@@ -66,6 +71,7 @@ const DiagRow = ({diag}: { diag: DeviceDiag }) => {
                     {label}
                 </span>
             ))}
+            <span className={`rounded-full px-2 py-0.5 ${gsm.cls}`}>{gsm.text}</span>
         </div>
     )
 }
