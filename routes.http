@@ -1,0 +1,12 @@
+POST https://api.heigit.org/openrouteservice/v2/directions/wheelchair/geojson
+Authorization: {{ors_key}}
+Content-Type: application/json
+
+{
+  "coordinates": [[28.658734, 50.254712], [28.6727, 50.2547]],
+  "alternative_routes": {
+    "target_count": 3,
+    "share_factor": 0.6,
+    "weight_factor": 1.6
+  }
+}

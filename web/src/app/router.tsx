@@ -8,6 +8,7 @@ import {MapPage} from "../features/map/pages/mapPage.tsx";
 import {MapEditor} from "../features/map/pages/mapEditor.tsx";
 import {LivePage} from "../features/live/pages/livePage.tsx";
 import {SosSettingsPage} from "../features/sos/pages/sosSettingsPage.tsx";
+import {RoutePage} from "../features/routing/pages/RoutePage.tsx";
 
 export const Router = () => {
     return (
@@ -17,9 +18,8 @@ export const Router = () => {
                 <Route path='/' element={<Navigate to='/login'/>}/>
                 <Route path='/map' element={<MapPage/>}/>
                 <Route path='/live' element={<LivePage/>}/>
-
+                <Route path='/route' element={<RoutePage/>}/>
                 <Route element={<PublicOnlyRoute/>}>
-
                     <Route path='/login' element={<LoginPage/>}/>
                     <Route path='/register' element={<RegisterPage/>}/>
 

@@ -11,9 +11,9 @@ export const MapEditor = () => {
     const [point, setPoint] = useState<Point | null>(null)
 
     return (
-        <div className='h-screen flex flex-col '>
+        <div className='h-dvh flex flex-col'>
             <NavBar/>
-            <div className='flex-1 min-h-0 flex justify-center gap-4 p-4'>
+            <div className='flex-1 min-h-0 flex justify-center gap-4 p-2 md:p-4'>
                 <MapView>
                     <ClickLayer onPick={setPoint}/>
                     {point && <Marker icon={createIcon('ok')} position={[point.lat, point.lng]}/>}

@@ -3,3 +3,5 @@ supabase/.temp/
 supabase/.env*
 firmware/secrets.h
 Thumbs.db
+ env.routes.http
+    http-client.private.env.json
