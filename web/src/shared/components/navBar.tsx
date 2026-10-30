@@ -22,6 +22,7 @@ const {
     lineBotOpen,
     lineMidOpen
 } = NAV_STYLES
+
 export const NavBar = () => {
     const [isOpen, setIsOpen] = useState(false)
     const [error, setError] = useState('')

@@ -1,4 +1,10 @@
-export const NAV_LINKS = [
+type NavLink = {
+    to: string;
+    label: string;
+    danger?: boolean;
+};
+
+export const NAV_LINKS:NavLink[] = [
     {to: '/map', label: 'Map'},
     {to: '/map/editor', label: 'Map editor'},
     {to: '/route', label: 'Navigator'},
