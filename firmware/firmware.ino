@@ -52,7 +52,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "3.2"
+#define FW_VERSION "3.3"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -119,6 +119,7 @@ uint32_t seq = 0, bumpLedUntil = 0, lastBumpMs = 0, lastGoodRead = 0, badReads =
 float    lastRms = 0;
 String   publishedState = "";
 bool     diagDirty = true;      // треба (пере)опублікувати діагностику
+bool     batLow = false;        // акумулятор сідає (лише попередження)
 
 // Стан дороги за останні 10 с: RMS² і пік кожного пакета (100 мс)
 #define RING_N 100
@@ -1258,6 +1259,7 @@ void drawScreen() {
     float v = batteryV();
     if (v > 2.5f) l1 += " " + String(constrain((int)((v - 3.3f) / 0.9f * 100), 0, 100)) + "%";
     l2 = sensorOk ? String(lvl) + " " + idx : String("Датчик мовчить");
+    if (batLow && (millis() / 3000) % 2) l2 = "Зарядіть акум.";
     if (pointActive()) l2 = "Точка " + String(pointSeq) + " 1=голос";
     else if (pointSeq) l2 += " Т" + String(pointSeq);
   }
@@ -1359,18 +1361,21 @@ void retryFailedNotes() {
   if (sdOk && !recording) queuePendingNotes();
 }
 
+// Низький заряд: лише попереджаємо (екран, сайт). Пристрій НЕ присипляємо: дільник на GPIO34
+// буває не підключений або міряє не те (живлення через TP4056 + MT3608), і хибне «розряджено»
+// вимикало пристрій через 10 с. Акумулятор від переразряду захищає плата TP4056 (DW01).
 void checkBattery() {
   static uint32_t lowSince = 0, lastCheck = 0;
   if (millis() - lastCheck < 1000) return;
   lastCheck = millis();
   float v = batteryV();
-  if (v < 2.5f || v >= BATT_CUTOFF) { lowSince = 0; return; }
+  bool low = v >= 2.8f && v < BATT_CUTOFF;          // нижче 2.8 В — дільника, схоже, немає
+  if (!low) { lowSince = 0; if (batLow) { batLow = false; Serial.printf("Акумулятор: %.2f В, норма\n", v); } return; }
   if (!lowSince) lowSince = millis();
-  if (millis() - lowSince > 10000) {
-    if (recording) recStopNote();
-    if (mqtt.connected()) { mqtt.publish(MQTT_STATUS, "low_battery", true); mqtt.loop(); delay(200); }
-    screenShow("Розряджено", "Заряди мене");
-    esp_deep_sleep_start();
+  if (!batLow && millis() - lowSince > 30000) {
+    batLow = true;
+    Serial.printf("Акумулятор сідає: %.2f В\n", v);
+    toast("Акумулятор сідає", String(v, 2) + " V, зарядіть", 5000);
   }
 }
 
