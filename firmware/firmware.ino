@@ -4,7 +4,7 @@
   Плата:  ESP32 Dev Module (ESP32 DevKit V1)
 
   Підключення (див. docs у проєкті):
-    I2C  SDA=21 SCL=22   MPU6050 (0x68), OLED SSD1306 128x32 (0x3C), BH1750 (0x23)
+    I2C  SDA=21 SCL=22   MPU6050 (0x68), екран: OLED SSD1306 128x32 (0x3C/0x3D) або LCD 1602 з I2C-адаптером (0x27/0x3F)
     SD   CS=5 SCK=18 MOSI=23 MISO=19
     Мікрофон INMP441  SCK=26 WS=25 SD=39 (L/R на GND)
     GPS  TX модуля -> 35
@@ -52,7 +52,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "3.1"
+#define FW_VERSION "3.2"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -286,35 +286,107 @@ void i2cScan() {
   Serial.printf("I2C: %s\n", f.length() ? f.c_str() : "нічого");
 }
 
-// Екран: шукаємо на 0x3C і 0x3D. Якщо на старті не відповів (погано тримає дріт або
-// повільно прокинувся після ввімкнення), loop() пробує ще раз кожні 3 с.
-uint8_t oledAddr = 0;
+// ---------- Екран: OLED SSD1306 (0x3C/0x3D) або LCD 1602 з адаптером PCF8574 ----------
+// LCD знає лише латиницю, тому український текст для нього транслітерується.
+uint8_t screenAddr = 0;
+bool    lcdOk = false;
 bool    oledFresh = false;       // щойно ініціалізований — перемалювати
-bool oledTryInit() {
+
+static const char* const CYR[32] = {"a","b","v","h","d","e","zh","z","y","i","k","l","m","n","o","p",
+                                    "r","s","t","u","f","kh","ts","ch","sh","shch","","y","","e","iu","ia"};
+String translit(const String& s) {
+  String o; o.reserve(s.length());
+  for (size_t i = 0; i < s.length();) {
+    uint8_t c = s[i];
+    if (c < 0x80) { o += (char)c; i++; continue; }
+    uint32_t cp; int n;
+    if ((c & 0xE0) == 0xC0 && i + 1 < s.length()) { cp = ((c & 0x1F) << 6) | (s[i + 1] & 0x3F); n = 2; }
+    else if ((c & 0xF0) == 0xE0 && i + 2 < s.length()) { cp = ((c & 0x0F) << 12) | ((s[i + 1] & 0x3F) << 6) | (s[i + 2] & 0x3F); n = 3; }
+    else { i++; continue; }
+    i += n;
+    bool up = false;
+    const char* r = "?";
+    if (cp >= 0x410 && cp <= 0x42F) { up = true; cp += 0x20; }
+    if (cp >= 0x430 && cp <= 0x44F) r = CYR[cp - 0x430];
+    else if (cp == 0x404 || cp == 0x454) { up = cp == 0x404; r = "ie"; }
+    else if (cp == 0x406 || cp == 0x407 || cp == 0x456 || cp == 0x457) { up = cp < 0x450; r = "i"; }
+    else if (cp == 0x490 || cp == 0x491) { up = cp == 0x490; r = "g"; }
+    else if (cp == 0x2192) r = "->";
+    else if (cp == 0x2026) r = "...";
+    else if (cp == 0xB7 || cp == 0x2014 || cp == 0x2013) r = "-";
+    else if (cp == 0x2019 || cp == 0x2BC) r = "";
+    if (up && r[0]) { o += (char)toupper(r[0]); o += (r + 1); } else o += r;
+  }
+  return o;
+}
+
+#define LCD_BL 0x08
+#define LCD_EN 0x04
+#define LCD_RS 0x01
+void lcdExp(uint8_t v) { Wire.beginTransmission(screenAddr); Wire.write(v | LCD_BL); Wire.endTransmission(); }
+void lcdNib(uint8_t v) { lcdExp(v | LCD_EN); delayMicroseconds(1); lcdExp(v & ~LCD_EN); delayMicroseconds(50); }
+void lcdByte(uint8_t b, uint8_t mode) { lcdNib((b & 0xF0) | mode); lcdNib(((b << 4) & 0xF0) | mode); }
+void lcdCmd(uint8_t c) { lcdByte(c, 0); if (c <= 0x03) delay(2); }
+void lcdInit() {
+  lcdExp(0); delay(50);
+  lcdNib(0x30); delayMicroseconds(4500);
+  lcdNib(0x30); delayMicroseconds(4500);
+  lcdNib(0x30); delayMicroseconds(150);
+  lcdNib(0x20);                                   // 4-бітний режим
+  lcdCmd(0x28); lcdCmd(0x08); lcdCmd(0x01); lcdCmd(0x06); lcdCmd(0x0C);
+}
+void lcdLine(uint8_t row, const String& s) {
+  lcdCmd(0x80 | (row ? 0x40 : 0));
+  String t = translit(s);
+  for (int i = 0; i < 16; i++) lcdByte(i < (int)t.length() ? (uint8_t)t[i] : ' ', LCD_RS);
+}
+
+bool screenOk() { return oledOk || lcdOk; }
+String lcdShown[2];              // що вже на LCD: переписуємо лише змінений рядок (I2C повільний)
+void screenShow(const String& l1, const String& l2 = "") {
+  if (oledOk) { oled.clearBuffer(); oled.setCursor(0, 13); oled.print(l1); oled.setCursor(0, 30); oled.print(l2); oled.sendBuffer(); }
+  else if (lcdOk) {
+    if (l1 != lcdShown[0]) { lcdLine(0, l1); lcdShown[0] = l1; }
+    if (l2 != lcdShown[1]) { lcdLine(1, l2); lcdShown[1] = l2; }
+  }
+}
+
+bool i2cHere(uint8_t a) { Wire.beginTransmission(a); return Wire.endTransmission() == 0; }
+
+// Спершу OLED, потім LCD. 0x23 пропускаємо: це датчик світла BH1750.
+// Якщо екран не відповів на старті (дріт, повільне живлення), loop() пробує ще раз кожні 3 с.
+bool screenTryInit() {
   for (uint8_t a : {0x3C, 0x3D}) {
-    Wire.beginTransmission(a);
-    if (Wire.endTransmission() != 0) continue;
+    if (!i2cHere(a)) continue;
     oled.setI2CAddress(a * 2);
     oled.setBusClock(100000);
     oled.begin();
     oled.enableUTF8Print();
     oled.setFont(u8g2_font_6x13_t_cyrillic);
-    oledAddr = a; oledOk = true; oledFresh = true; diagDirty = true;
-    Serial.printf("OLED: 0x%02X\n", a);
+    screenAddr = a; oledOk = true; oledFresh = true; diagDirty = true;
+    Serial.printf("Екран OLED: 0x%02X\n", a);
+    return true;
+  }
+  for (uint8_t a : {0x27, 0x3F, 0x26, 0x25, 0x24, 0x22, 0x21, 0x20, 0x3E, 0x3B, 0x3A, 0x39, 0x38}) {
+    if (!i2cHere(a)) continue;
+    screenAddr = a;
+    lcdInit();
+    lcdShown[0] = lcdShown[1] = "";
+    lcdOk = true; oledFresh = true; diagDirty = true;
+    Serial.printf("Екран LCD 1602: 0x%02X\n", a);
     return true;
   }
   return false;
 }
 
 // Екран зник (відійшов дріт) — позначити; з'явився — ініціалізувати заново
-void oledWatch() {
+void screenWatch() {
   static uint32_t last = 0;
   if (millis() - last < 3000) return;
   last = millis();
-  if (oledOk) {
-    Wire.beginTransmission(oledAddr);
-    if (Wire.endTransmission() != 0) { oledOk = false; diagDirty = true; Serial.println("OLED: зник"); i2cScan(); }
-  } else if (oledTryInit()) {
+  if (screenOk()) {
+    if (!i2cHere(screenAddr)) { oledOk = lcdOk = false; diagDirty = true; Serial.println("Екран: зник"); i2cScan(); }
+  } else if (screenTryInit()) {
     i2cScan();
   }
 }
@@ -424,7 +496,7 @@ void startOta() {
   ArduinoOTA.setPassword(OTA_PASSWORD);
   ArduinoOTA.onStart([]() {
     otaActive = true;
-    if (oledOk) { oled.clearBuffer(); oled.setCursor(0, 13); oled.print("Оновлення..."); oled.sendBuffer(); }
+    screenShow("Оновлення...");
   });
   ArduinoOTA.onError([](ota_error_t e) { otaActive = false; Serial.printf("OTA помилка %u\n", e); });
   ArduinoOTA.begin();
@@ -458,7 +530,7 @@ void publishDiag() {
   char js[320];
   snprintf(js, sizeof(js),
            "{\"fw\":\"%s\",\"sd\":%d,\"mic\":%d,\"oled\":%d,\"gsm\":%d,\"sim\":%d,\"reg\":%d,\"csq\":%d,\"mpu\":%d,\"sos\":%d,\"ssid\":\"%s\",\"ip\":\"%s\",\"i2c\":\"%s\"}",
-           FW_VERSION, sdOk, micOk, oledOk, gsmOk, gsmSim, gsmReg, gsmCsq, sensorOk, phoneSet,
+           FW_VERSION, sdOk, micOk, screenOk(), gsmOk, gsmSim, gsmReg, gsmCsq, sensorOk, phoneSet,
            WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), i2cFound.c_str());
   if (mqtt.publish(MQTT_DIAG, js, true)) diagDirty = false;
 }
@@ -1059,7 +1131,7 @@ void pointAdd() {
   strlcpy(j.sev, roadSeverity(), sizeof(j.sev));
   queueJob(j);
   const char* sv = !strcmp(j.sev, "bad") ? "погано" : !strcmp(j.sev, "warning") ? "нерівно" : "рівно";
-  toast("Точка " + String(pointSeq) + " (" + sv + ")", "1 = голос до неї", 4000);
+  toast("Точка " + String(pointSeq) + " " + sv, "1 = голос до неї", 4000);
   char ev[180];
   snprintf(ev, sizeof(ev), "{\"type\":\"point\",\"n\":%u,\"lat\":%.6f,\"lon\":%.6f,\"sev\":\"%s\",\"sent\":false}", pointSeq, lat, lon, j.sev);
   mqttEvent(ev);
@@ -1158,7 +1230,7 @@ void onSample(float av) {
 //                                Екран
 // =====================================================================
 void drawScreen() {
-  if (!oledOk) return;
+  if (!screenOk()) return;
   static uint32_t last = 0;
   if (millis() - last < 250) return;
   last = millis();
@@ -1170,7 +1242,7 @@ void drawScreen() {
     String ph = sosPhone; xSemaphoreGive(sosMutex);
     if (sosCalling) l2 = "Дзвоню " + ph;
     else if (!ph.length()) l2 = "Номер не задано!";
-    else l2 = !gsmOk ? "Надіслано на сайт" : !gsmReg ? "Немає мережі GSM" : "Не вдалося подзвонити";
+    else l2 = !gsmOk ? "Пішло на сайт" : !gsmReg ? "Немає GSM" : "Не подзвонив";
   } else if (recording) {
     uint32_t s = (millis() - recStart) / 1000;
     char t[24]; snprintf(t, sizeof(t), "%lu:%02lu", (unsigned long)(s / 60), (unsigned long)(s % 60));
@@ -1181,23 +1253,20 @@ void drawScreen() {
   } else {
     int idx = min(100, (int)lroundf(lastRms / 0.35f * 100));
     const char* lvl = lastRms < 0.06f ? "Рівно" : lastRms < 0.14f ? "Нерівно" : lastRms < 0.25f ? "Погано" : "Дуже погано";
-    l1 = String(WiFi.status() == WL_CONNECTED ? (mqtt.connected() ? "Онлайн" : "Wi-Fi") : "Без мережі") +
-         "  GPS:" + (gpsFix() ? String((int)gps.satellites.value()) : String("-"));
+    l1 = String(WiFi.status() == WL_CONNECTED ? (mqtt.connected() ? "Онлайн" : "Wi-Fi") : "Офлайн") +
+         " GPS" + (gpsFix() ? String((int)gps.satellites.value()) : String("-"));
     float v = batteryV();
-    if (v > 2.5f) l1 += "  " + String(constrain((int)((v - 3.3f) / 0.9f * 100), 0, 100)) + "%";
-    l2 = sensorOk ? String(lvl) + " " + idx : String("Датчик не відповідає");
-    if (pointActive()) l2 = "Точка " + String(pointSeq) + ": 1=голос";
-    else if (pointSeq) l2 += "  Т:" + String(pointSeq);
+    if (v > 2.5f) l1 += " " + String(constrain((int)((v - 3.3f) / 0.9f * 100), 0, 100)) + "%";
+    l2 = sensorOk ? String(lvl) + " " + idx : String("Датчик мовчить");
+    if (pointActive()) l2 = "Точка " + String(pointSeq) + " 1=голос";
+    else if (pointSeq) l2 += " Т" + String(pointSeq);
   }
 
   static String p1, p2;
   if (l1 == p1 && l2 == p2 && !recording && !oledFresh) return;
   oledFresh = false;
   p1 = l1; p2 = l2;
-  oled.clearBuffer();
-  oled.setCursor(0, 13); oled.print(l1);
-  oled.setCursor(0, 30); oled.print(l2);
-  oled.sendBuffer();
+  screenShow(l1, l2);
 }
 
 // =====================================================================
@@ -1300,7 +1369,7 @@ void checkBattery() {
   if (millis() - lowSince > 10000) {
     if (recording) recStopNote();
     if (mqtt.connected()) { mqtt.publish(MQTT_STATUS, "low_battery", true); mqtt.loop(); delay(200); }
-    if (oledOk) { oled.clearBuffer(); oled.setCursor(0, 13); oled.print("Розряджено"); oled.setCursor(0, 30); oled.print("Заряди мене"); oled.sendBuffer(); }
+    screenShow("Розряджено", "Заряди мене");
     esp_deep_sleep_start();
   }
 }
@@ -1314,6 +1383,9 @@ void setup() {
   Serial.println("\n=== РІВНОХІД v2 ===");
   pinMode(PIN_LED_R, OUTPUT); pinMode(PIN_LED_G, OUTPUT); pinMode(PIN_LED_B, OUTPUT);
   for (auto& b : btns) pinMode(b.pin, INPUT_PULLUP);
+  // Перевірка світлодіода: червоний, зелений, синій по 0.3 с. Якщо якийсь колір не світиться —
+  // дивись його резистор і дріт (R=13, G=4, B=2); не світиться жоден — спільна ніжка не на GND.
+  led(1, 0, 0); delay(300); led(0, 1, 0); delay(300); led(0, 0, 1); delay(300);
   led(1, 1, 0);
   prefs.begin("rivnohid", false);
   sosMutex = xSemaphoreCreateMutex();
@@ -1326,9 +1398,8 @@ void setup() {
   Wire.setTimeOut(50);
   delay(100);                                          // дешеві SSD1306 прокидаються після ESP32
   i2cScan();
-  if (oledTryInit()) {
-    oled.clearBuffer(); oled.setCursor(0, 13); oled.print("Рівнохід"); oled.setCursor(0, 30); oled.print("Запуск..."); oled.sendBuffer();
-  } else Serial.println("OLED не знайдено ні на 0x3C, ні на 0x3D: перевір VCC/GND/SDA/SCL екрана");
+  if (screenTryInit()) screenShow("Рівнохід", "Запуск...");
+  else Serial.println("Екран не знайдено (OLED 0x3C/0x3D, LCD 0x27/0x3F): перевір VCC/GND/SDA/SCL");
 
   sdOk = SD.begin(PIN_SD_CS);
   Serial.println(sdOk ? "SD: OK" : "SD: немає картки");
@@ -1343,7 +1414,7 @@ void setup() {
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setBufferSize(1024);
   mqtt.setKeepAlive(15);
-  if (oledOk) { oled.clearBuffer(); oled.setCursor(0, 13); oled.print("Шукаю Wi-Fi..."); oled.sendBuffer(); }
+  screenShow("Шукаю Wi-Fi...");
   ensureWifi();
   ensureMqtt();
 
@@ -1352,7 +1423,7 @@ void setup() {
   if (sdOk) queuePendingNotes();
 
   sensorOk = mpuInit();
-  if (oledOk) { oled.clearBuffer(); oled.setCursor(0, 13); oled.print("Калібрування"); oled.setCursor(0, 30); oled.print("не рухай 2 с"); oled.sendBuffer(); }
+  screenShow("Калібрування", "не рухай 2 с");
   if (sensorOk) calibrate();
   toast("Готово", String(sdOk ? "SD " : "") + (micOk ? "Мікр " : "") + (gsmOk ? "GSM" : ""));
 }
@@ -1399,7 +1470,7 @@ void loop() {
   handleResults();
   retryFailedNotes();
   trackSend();
-  oledWatch();
+  screenWatch();
   sdWatch();
   gsmPoll();
   drawScreen();
