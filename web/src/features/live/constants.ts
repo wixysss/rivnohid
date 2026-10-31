@@ -54,6 +54,7 @@ export type LivePacket = {
     rec?: 0 | 1        // йде запис голосу
     road?: 0 | 1       // (прошивка 2.x) автопозначки стану доріг
     pt?: number        // номер точки, до якої зараз прив'яжеться голос (0 — немає)
+    nosensor?: 0 | 1   // акселерометр не відповідає: у пакеті лише GPS і заряд
 }
 
 export type PointSeverity = 'ok' | 'warning' | 'bad'

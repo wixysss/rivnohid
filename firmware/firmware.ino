@@ -52,7 +52,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "3.3"
+#define FW_VERSION "3.4"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -1220,6 +1220,23 @@ void sendBatch() {
   batchN = 0; sumSq = 0; peak = 0;
 }
 
+// Акселерометр не відповідає — GPS, заряд і запис однаково йдуть на сайт раз на секунду
+void gpsOnlyPacket() {
+  static uint32_t last = 0;
+  if (millis() - last < 1000 || !mqtt.connected()) return;
+  last = millis();
+  char buf[260];
+  int p = snprintf(buf, sizeof(buf), "{\"seq\":%lu,\"t\":%lu,\"hz\":%d,\"a\":[],\"rms\":0,\"pk\":0,\"bump\":0,\"mark\":0,\"nosensor\":1,\"bat\":%.2f,\"rec\":%d,\"pt\":%u",
+                   (unsigned long)seq++, (unsigned long)millis(), SAMPLE_HZ, batteryV(), recording ? 1 : 0, pointActive() ? pointSeq : 0);
+  if (gpsFix())
+    p += snprintf(buf + p, sizeof(buf) - p, ",\"lat\":%.6f,\"lon\":%.6f,\"spd\":%.1f,\"sat\":%d",
+                  gps.location.lat(), gps.location.lng(), gps.speed.kmph(), (int)gps.satellites.value());
+  else
+    p += snprintf(buf + p, sizeof(buf) - p, ",\"sat\":%d", (int)gps.satellites.value());
+  snprintf(buf + p, sizeof(buf) - p, "}");
+  mqtt.publish(MQTT_TOPIC, buf);
+}
+
 void onSample(float av) {
   batchBuf[batchN++] = (int16_t)lroundf(av * 1000.0f);
   sumSq += av * av;
@@ -1444,6 +1461,7 @@ void loop() {
 
   // Акселерометр
   if (!sensorOk) {
+    gpsOnlyPacket();
     static uint32_t lastTry = 0;
     if (millis() - lastTry > 3000) { lastTry = millis(); if (mpuInit()) { sensorOk = true; calibrate(); } }
   } else {

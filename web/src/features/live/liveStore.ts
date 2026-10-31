@@ -54,6 +54,7 @@ export class LiveStore {
     roadMarkers = 0
     points = 0             // скільки точок поставлено кнопкою 3
     linkPoint = 0          // до якої точки зараз прив'яжеться голос
+    noSensor = false       // пристрій на зв'язку, але акселерометр мовчить
     sos: SosAlert | null = null
 
     private secSq = 0
@@ -82,6 +83,7 @@ export class LiveStore {
         if (p.rec != null) this.recording = p.rec === 1
         if (p.road != null) this.roadMode = p.road === 1
         if (p.pt != null) this.linkPoint = p.pt
+        this.noSensor = p.nosensor === 1
         this.speed = p.spd
         this.sat = p.sat
         this.bat = p.bat
