@@ -52,7 +52,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "3.5"
+#define FW_VERSION "3.6"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -325,7 +325,12 @@ String translit(const String& s) {
 #define LCD_BL 0x08
 #define LCD_EN 0x04
 #define LCD_RS 0x01
-void lcdExp(uint8_t v) { Wire.beginTransmission(screenAddr); Wire.write(v | LCD_BL); Wire.endTransmission(); }
+// LCD у 4-бітному режимі: якщо від тряски чи стрибка живлення загубиться хоч один півбайт,
+// далі він показує «кракозябри». Тому при будь-якій помилці I2C і просто раз на 15 с
+// екран ініціалізується заново й переписується.
+bool lcdErr = false;
+uint32_t lcdInitAt = 0;
+void lcdExp(uint8_t v) { Wire.beginTransmission(screenAddr); Wire.write(v | LCD_BL); if (Wire.endTransmission() != 0) lcdErr = true; }
 void lcdNib(uint8_t v) { lcdExp(v | LCD_EN); delayMicroseconds(1); lcdExp(v & ~LCD_EN); delayMicroseconds(50); }
 void lcdByte(uint8_t b, uint8_t mode) { lcdNib((b & 0xF0) | mode); lcdNib(((b << 4) & 0xF0) | mode); }
 void lcdCmd(uint8_t c) { lcdByte(c, 0); if (c <= 0x03) delay(2); }
@@ -336,6 +341,16 @@ void lcdInit() {
   lcdNib(0x30); delayMicroseconds(150);
   lcdNib(0x20);                                   // 4-бітний режим
   lcdCmd(0x28); lcdCmd(0x08); lcdCmd(0x01); lcdCmd(0x06); lcdCmd(0x0C);
+  lcdErr = false; lcdInitAt = millis();
+}
+// Те саме без очищення екрана: повертає синхронізацію півбайтів, але не блимає
+void lcdResync() {
+  lcdNib(0x30); delayMicroseconds(4500);
+  lcdNib(0x30); delayMicroseconds(150);
+  lcdNib(0x30); delayMicroseconds(150);
+  lcdNib(0x20);
+  lcdCmd(0x28); lcdCmd(0x06); lcdCmd(0x0C);
+  lcdErr = false; lcdInitAt = millis();
 }
 void lcdLine(uint8_t row, const String& s) {
   lcdCmd(0x80 | (row ? 0x40 : 0));
@@ -388,6 +403,11 @@ void screenWatch() {
   last = millis();
   if (screenOk()) {
     if (!i2cHere(screenAddr)) { oledOk = lcdOk = false; diagDirty = true; Serial.println("Екран: зник"); i2cScan(); }
+    else if (lcdOk && (lcdErr || millis() - lcdInitAt > 15000)) {
+      if (lcdErr) { Serial.println("LCD: збій I2C, перезапускаю екран"); lcdInit(); }
+      else lcdResync();
+      lcdShown[0] = lcdShown[1] = ""; oledFresh = true;
+    }
   } else if (screenTryInit()) {
     i2cScan();
   }
