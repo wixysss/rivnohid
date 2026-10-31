@@ -41,8 +41,12 @@ export const useLiveFeed = () => {
                     try {
                         const ev = JSON.parse(text) as DeviceEvent
                         store.handleEvent(ev)
-                        if (ev.type === 'voice') void queryClient.invalidateQueries({queryKey: ['voice-notes']})
+                        if (ev.type === 'voice') {
+                            void queryClient.invalidateQueries({queryKey: ['voice-notes']})
+                            void queryClient.invalidateQueries({queryKey: ['markers']})   // голос міг створити точку
+                        }
                         if (ev.type === 'marker') void queryClient.invalidateQueries({queryKey: ['markers']})
+                        if (ev.type === 'point' && ev.sent) void queryClient.invalidateQueries({queryKey: ['markers']})
                     } catch {
                         /* битий пакет */
                     }

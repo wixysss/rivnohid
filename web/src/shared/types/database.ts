@@ -47,6 +47,7 @@ export type Database = {
           id: string
           lat: number | null
           lng: number | null
+          marker_id: string | null
           sample_rate: number
         }
         Insert: {
@@ -57,6 +58,7 @@ export type Database = {
           id?: string
           lat?: number | null
           lng?: number | null
+          marker_id?: string | null
           sample_rate?: number
         }
         Update: {
@@ -67,7 +69,43 @@ export type Database = {
           id?: string
           lat?: number | null
           lng?: number | null
+          marker_id?: string | null
           sample_rate?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voice_notes_marker_id_fkey"
+            columns: ["marker_id"]
+            isOneToOne: false
+            referencedRelation: "markers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      device_track: {
+        Row: {
+          created_at: string
+          device_id: string | null
+          id: number
+          lat: number
+          lng: number
+          rms: number | null
+        }
+        Insert: {
+          created_at?: string
+          device_id?: string | null
+          id?: never
+          lat: number
+          lng: number
+          rms?: number | null
+        }
+        Update: {
+          created_at?: string
+          device_id?: string | null
+          id?: never
+          lat?: number
+          lng?: number
+          rms?: number | null
         }
         Relationships: []
       }
@@ -250,6 +288,18 @@ export type Database = {
       voice_note_audio: {
         Args: { p_id: string }
         Returns: string | null
+      }
+      get_device_track: {
+        Args: { p_days?: number }
+        Returns: [number, number, number, number][]
+      }
+      set_point_note: {
+        Args: { p_id: string, p_note: string }
+        Returns: undefined
+      }
+      delete_point: {
+        Args: { p_id: string }
+        Returns: undefined
       }
     }
     Enums: {

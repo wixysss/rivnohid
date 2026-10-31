@@ -20,9 +20,12 @@ export const useRoutePoints = () => {
     }
 
 
+    // Точка А — там, де зараз пристрій
+    const startAt = (point: Point) => setFrom(point)
+
     const reset = () => {
         setFrom(null)
         setTo(null)
     }
-    return {from, to, pick, reset}
+    return {from, to, pick, startAt, reset}
 }

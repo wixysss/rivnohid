@@ -8,11 +8,15 @@ import {RoutesLayer} from "../components/RoutesLayer.tsx";
 import {Loader} from "../../../shared/components/loader.tsx";
 import {NavBar} from "../../../shared/components/navBar.tsx";
 import {ROUTE_STYLES} from "../constants.ts";
+import {SurveyPanel} from "../components/SurveyPanel.tsx";
+import {useDevicePosition} from "../../live/hooks/useDevicePosition.ts";
+import {DevicePositionMarker} from "../../live/components/devicePositionMarker.tsx";
 
 const {panel, hint, errors, list, cardBest, card, badge, stats, statValue, resetButton,badgeMuted} = ROUTE_STYLES
 export const RoutePage = () => {
-    const {from, to, pick, reset} = useRoutePoints()
+    const {from, to, pick, startAt, reset} = useRoutePoints()
     const {routes, isLoading, error} = useRankedRoutes(from, to)
+    const device = useDevicePosition()
 
     return (
         <div className='h-dvh flex flex-col'>
@@ -23,6 +27,7 @@ export const RoutePage = () => {
                     {from && <Marker icon={createIcon('ok')} position={[from.lat, from.lng]}/>}
                     {to && <Marker icon={createIcon('ok')} position={[to.lat, to.lng]}/>}
                     {routes && <RoutesLayer routes={routes}/>}
+                    <DevicePositionMarker pos={device.pos}/>
                 </MapView>
 
                 <div className={panel}>
@@ -46,6 +51,7 @@ export const RoutePage = () => {
                         </ul>
                     )}
                     {(from || to) && <button className={resetButton} onClick={reset}>Скинути</button>}
+                    <SurveyPanel device={device} onStartHere={startAt}/>
                 </div>
 
             </div>

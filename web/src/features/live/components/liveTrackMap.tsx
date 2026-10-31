@@ -42,6 +42,12 @@ export const LiveTrackMap = ({track, events, lat, lon}: Props) => (
                     <Tooltip>Яма · {e.peak.toFixed(2)} g · {e.time.toLocaleTimeString('uk-UA')}</Tooltip>
                 </CircleMarker>
             ))}
+            {events.filter((e) => e.kind === 'point' && e.lat != null && e.lon != null).map((e) => (
+                <CircleMarker key={e.id} center={[e.lat!, e.lon!]} radius={9}
+                              pathOptions={{color: '#7c3aed', weight: 3, fillColor: '#fff', fillOpacity: 1}}>
+                    <Tooltip>Точка {e.pointN} · {e.time.toLocaleTimeString('uk-UA')}</Tooltip>
+                </CircleMarker>
+            ))}
             {lat != null && lon != null && (
                 <CircleMarker center={[lat, lon]} radius={9}
                               pathOptions={{color: '#fff', weight: 3, fillColor: '#2a78d6', fillOpacity: 1}}>
