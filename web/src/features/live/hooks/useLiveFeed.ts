@@ -71,7 +71,7 @@ export const useLiveFeed = () => {
     const store = storeRef.current
     const fresh = store.lastPacketAt > 0 && performance.now() - store.lastPacketAt < OFFLINE_AFTER_MS
     const status: FeedStatus = demo ? 'demo'
-        : fresh ? 'live'
+        : fresh ? (store.noSensor ? 'noSensor' : 'live')
             : !brokerUp ? 'connecting'
                 : deviceState === 'low_battery' ? 'lowBattery'
                     : deviceState === 'offline' ? 'offline'
