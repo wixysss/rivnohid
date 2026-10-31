@@ -72,6 +72,11 @@ const DiagRow = ({diag}: { diag: DeviceDiag }) => {
                 </span>
             ))}
             <span className={`rounded-full px-2 py-0.5 ${gsm.cls}`}>{gsm.text}</span>
+            {diag.stuck && (
+                <span className='rounded-full bg-amber-50 px-2 py-0.5 text-amber-700'>
+                    Замкнена кнопка {diag.stuck}: перевір ніжки (бери по діагоналі)
+                </span>
+            )}
             {diag.i2c != null && (!diag.oled || !diag.mpu) && (
                 <span className='text-zinc-500'>
                     На шині I2C: {diag.i2c || 'нікого'}

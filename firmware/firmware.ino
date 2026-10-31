@@ -52,7 +52,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "3.4"
+#define FW_VERSION "3.5"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -195,6 +195,7 @@ QueueHandle_t jobQ, resQ;
 int voiceInFlight = 0;          // скільки нотаток зараз у черзі/надсилаються
 
 void recStopNote();
+String stuckButtons();
 
 // =====================================================================
 //                              Дрібниці
@@ -530,9 +531,9 @@ void publishDiag() {
   xSemaphoreTake(sosMutex, portMAX_DELAY); phoneSet = sosPhone[0] ? 1 : 0; xSemaphoreGive(sosMutex);
   char js[320];
   snprintf(js, sizeof(js),
-           "{\"fw\":\"%s\",\"sd\":%d,\"mic\":%d,\"oled\":%d,\"gsm\":%d,\"sim\":%d,\"reg\":%d,\"csq\":%d,\"mpu\":%d,\"sos\":%d,\"ssid\":\"%s\",\"ip\":\"%s\",\"i2c\":\"%s\"}",
+           "{\"fw\":\"%s\",\"sd\":%d,\"mic\":%d,\"oled\":%d,\"gsm\":%d,\"sim\":%d,\"reg\":%d,\"csq\":%d,\"mpu\":%d,\"sos\":%d,\"ssid\":\"%s\",\"ip\":\"%s\",\"i2c\":\"%s\",\"stuck\":\"%s\"}",
            FW_VERSION, sdOk, micOk, screenOk(), gsmOk, gsmSim, gsmReg, gsmCsq, sensorOk, phoneSet,
-           WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), i2cFound.c_str());
+           WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), i2cFound.c_str(), stuckButtons().c_str());
   if (mqtt.publish(MQTT_DIAG, js, true)) diagDirty = false;
 }
 
@@ -1291,26 +1292,54 @@ void drawScreen() {
 // =====================================================================
 //                               Кнопки
 // =====================================================================
-struct Button { uint8_t pin; bool down; uint32_t since; bool longFired; };
+// Кнопка спрацьовує, лише якщо LOW тримається 60 мс (фільтр наводок від MT3608 і довгих дротів).
+// Кнопка, що замкнена вже при ввімкненні (переплутані ніжки чи замикання в корпусі), ігнорується,
+// доки її не відпустять на 1 с — так «сама натиснута» кнопка не запускає SOS.
+struct Button { uint8_t pin; bool down; uint32_t since; bool longFired; uint32_t lowSince, highSince; bool stuck; };
 Button btns[4] = {{PIN_BTN1}, {PIN_BTN2}, {PIN_BTN3}, {PIN_BTN4}};
+String stuckButtons() { String r; for (int i = 0; i < 4; i++) if (btns[i].stuck) r += String(r.length() ? "," : "") + (i + 1); return r; }
+
+void buttonsInit() {
+  delay(20);
+  for (int i = 0; i < 4; i++) {
+    Button& b = btns[i];
+    b.stuck = digitalRead(b.pin) == LOW;
+    b.highSince = b.stuck ? 0 : millis();
+    if (b.stuck) Serial.printf("Кнопка %d (GPIO%d) замкнена при ввімкненні — ігнорую, доки не відпустять\n", i + 1, b.pin);
+  }
+}
 
 void handleButtons() {
   for (int i = 0; i < 4; i++) {
     Button& b = btns[i];
-    bool pressed = digitalRead(b.pin) == LOW;
-    if (pressed && !b.down && millis() - b.since > 40) {          // натиснули
+    bool low = digitalRead(b.pin) == LOW;
+    if (low) { if (!b.lowSince) b.lowSince = millis(); b.highSince = 0; }
+    else     { b.lowSince = 0; if (!b.highSince) b.highSince = millis(); }
+
+    if (b.stuck) {
+      if (!low && millis() - b.highSince > 1000) { b.stuck = false; diagDirty = true; Serial.printf("Кнопка %d відпущена\n", i + 1); }
+      continue;
+    }
+    bool pressed = low && millis() - b.lowSince >= 60;
+    bool released = !low && millis() - b.highSince >= 60;
+
+    if (pressed && !b.down) {                                       // натиснули
       b.down = true; b.since = millis(); b.longFired = false;
       if (i == 0) recStartNote();
       if (i == 1) recStopNote();
       if (i == 2) pointAdd();
       if (i == 3) {
         if (sosCalling || millis() < sosShownUntil) { sosHangup(); b.longFired = true; }
-        else toast("SOS: тримай 2 с", "відпусти, щоб скасувати", 2200);
+        else toast("SOS: тримай 2 с", "відпусти - скасую", 2200);
       }
     } else if (pressed && b.down && i == 3 && !b.longFired && millis() - b.since >= SOS_HOLD_MS && millis() >= sosShownUntil) {
       b.longFired = true; triggerSos();
-    } else if (!pressed && b.down && millis() - b.since > 40) {
-      b.down = false; b.since = millis();
+    } else if (pressed && b.down && millis() - b.since > 15000) {  // 15 с без відпускання — замкнена
+      b.stuck = true; b.down = false; diagDirty = true;
+      Serial.printf("Кнопка %d тримається 15 с — вважаю замкненою\n", i + 1);
+      toast("Кнопка " + String(i + 1), "замкнена? перевір", 4000);
+    } else if (released && b.down) {
+      b.down = false;
     }
   }
 }
@@ -1405,6 +1434,7 @@ void setup() {
   Serial.println("\n=== РІВНОХІД v2 ===");
   pinMode(PIN_LED_R, OUTPUT); pinMode(PIN_LED_G, OUTPUT); pinMode(PIN_LED_B, OUTPUT);
   for (auto& b : btns) pinMode(b.pin, INPUT_PULLUP);
+  buttonsInit();
   // Перевірка світлодіода: червоний, зелений, синій по 0.3 с. Якщо якийсь колір не світиться —
   // дивись його резистор і дріт (R=13, G=4, B=2); не світиться жоден — спільна ніжка не на GND.
   led(1, 0, 0); delay(300); led(0, 1, 0); delay(300); led(0, 0, 1); delay(300);
