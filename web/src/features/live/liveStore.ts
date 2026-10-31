@@ -2,6 +2,7 @@ import {
     type DeviceEvent,
     type Level,
     type LivePacket,
+    type PointSeverity,
     levelOfRms,
     SAMPLE_HZ,
     STRIP_SECONDS,
@@ -12,12 +13,15 @@ import {
 export type LiveEvent = {
     id: number
     time: Date
-    kind: 'bump' | 'mark' | 'voice' | 'sos' | 'marker'
+    kind: 'bump' | 'mark' | 'voice' | 'sos' | 'marker' | 'point'
     peak: number
     lat?: number
     lon?: number
     noteId?: string
     durMs?: number
+    pointN?: number
+    sev?: PointSeverity
+    sent?: boolean
 }
 
 export type SosAlert = { time: Date, lat?: number, lon?: number, called: boolean }
@@ -48,6 +52,8 @@ export class LiveStore {
     recording = false
     roadMode = false
     roadMarkers = 0
+    points = 0             // скільки точок поставлено кнопкою 3
+    linkPoint = 0          // до якої точки зараз прив'яжеться голос
     sos: SosAlert | null = null
 
     private secSq = 0
@@ -75,6 +81,7 @@ export class LiveStore {
 
         if (p.rec != null) this.recording = p.rec === 1
         if (p.road != null) this.roadMode = p.road === 1
+        if (p.pt != null) this.linkPoint = p.pt
         this.speed = p.spd
         this.sat = p.sat
         this.bat = p.bat
@@ -127,6 +134,18 @@ export class LiveStore {
             case 'marker':
                 this.roadMarkers++
                 break
+            case 'point': {
+                const same = this.events.find((x) => x.kind === 'point' && x.pointN === e.n && x.time.getTime() > Date.now() - 600000)
+                if (same) {
+                    same.sent = e.sent
+                    if (e.id) same.noteId = e.id
+                } else {
+                    this.points = Math.max(this.points, e.n)
+                    this.events.unshift({id: ++this.eventId, time: new Date(), kind: 'point', peak: 0, ...at(e.lat, e.lon),
+                        pointN: e.n, sev: e.sev, sent: e.sent, noteId: e.id})
+                }
+                break
+            }
             case 'sos':
                 this.sos = {time: new Date(), ...at(e.lat, e.lon), called: e.called}
                 this.events.unshift({id: ++this.eventId, time: new Date(), kind: 'sos', peak: 0, ...at(e.lat, e.lon)})

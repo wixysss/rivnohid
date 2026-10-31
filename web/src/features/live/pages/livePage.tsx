@@ -94,9 +94,9 @@ export const LivePage = () => {
                             <i className='inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-white'/>Йде запис голосу
                         </span>
                     )}
-                    {store.roadMode && (
-                        <span className='rounded-full border border-green-300 bg-green-50 px-3 py-1 text-sm text-green-800'>
-                            Карта доріг: вкл{store.roadMarkers ? ` · ${store.roadMarkers}` : ''}
+                    {store.points > 0 && (
+                        <span className='rounded-full border border-violet-300 bg-violet-50 px-3 py-1 text-sm text-violet-800'>
+                            Точок: {store.points}{store.linkPoint ? ` · голос піде в точку ${store.linkPoint}` : ''}
                         </span>
                     )}
                     <button onClick={() => setDemo((d) => !d)}

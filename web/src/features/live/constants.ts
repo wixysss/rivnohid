@@ -51,13 +51,18 @@ export type LivePacket = {
     spd?: number
     sat?: number
     rec?: 0 | 1        // йде запис голосу
-    road?: 0 | 1       // увімкнено автопозначки стану доріг
+    road?: 0 | 1       // (прошивка 2.x) автопозначки стану доріг
+    pt?: number        // номер точки, до якої зараз прив'яжеться голос (0 — немає)
 }
 
+export type PointSeverity = 'ok' | 'warning' | 'bad'
+
 export type DeviceEvent =
-    | { type: 'rec', on: boolean, lat?: number | null, lon?: number | null }
+    | { type: 'rec', on: boolean, lat?: number | null, lon?: number | null, point?: number }
     | { type: 'voice', id: string, lat: number | null, lon: number | null, dur: number }
     | { type: 'sos', lat: number | null, lon: number | null, called: boolean }
     | { type: 'sos_cancel' }
     | { type: 'road', on: boolean }
     | { type: 'marker', lat: number | null, lon: number | null }
+    // Кнопка 3: точка. Спершу sent=false (поставлено на пристрої), потім sent=true з id на сервері
+    | { type: 'point', n: number, id?: string, lat: number | null, lon: number | null, sev: PointSeverity, sent: boolean }

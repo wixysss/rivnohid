@@ -12,6 +12,7 @@ export const getVoiceNotes = async (): Promise<VoiceNote[]> => {
     const {data, error} = await supabase
         .from('voice_notes')
         .select('id, lat, lng, duration_ms, created_at')     // без самого аудіо
+        .is('marker_id', null)                              // нотатки з точкою показує сама точка
         .order('created_at', {ascending: false})
         .limit(200)
     if (error) throw error

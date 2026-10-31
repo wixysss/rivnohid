@@ -10,7 +10,10 @@ const KIND: Record<LiveEvent['kind'], { label: string, color: string }> = {
     voice: {label: 'Нотатка', color: '#2a78d6'},
     sos: {label: 'SOS', color: '#dc2626'},
     marker: {label: 'Позначка', color: '#71717a'},
+    point: {label: 'Точка', color: '#7c3aed'},
 }
+
+const SEV: Record<string, string> = {ok: 'рівно', warning: 'нерівно', bad: 'погано'}
 
 const where = (e: LiveEvent) => e.lat != null && e.lon != null ? `${e.lat.toFixed(5)}, ${e.lon.toFixed(5)}` : 'без GPS'
 
@@ -30,6 +33,7 @@ export const EventList = ({events}: { events: LiveEvent[] }) => {
                         </span>
                         <span className='truncate'>
                             {e.kind === 'voice' ? `${formatDuration(e.durMs ?? null)} · ${where(e)}`
+                                : e.kind === 'point' ? `№${e.pointN} · ${SEV[e.sev ?? 'ok']} · ${e.sent ? 'на карті' : 'надсилається…'}`
                                 : e.kind === 'sos' ? where(e)
                                     : `${e.peak.toFixed(2)} g · ${where(e)}`}
                         </span>

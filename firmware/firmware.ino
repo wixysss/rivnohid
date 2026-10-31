@@ -1,5 +1,5 @@
 /*
-  РІВНОХІД v2: акселерометр наживо, голосові нотатки, стан доріг на карті, SOS
+  РІВНОХІД v3: акселерометр і GPS наживо, точки з нотатками й голосом, трек доріг, SOS
   ---------------------------------------------------------------------------
   Плата:  ESP32 Dev Module (ESP32 DevKit V1)
 
@@ -10,7 +10,7 @@
     GPS  TX модуля -> 35
     SIM800L (необов'язково) TXD->16, RXD<-17
     Кнопки (другий вивід на GND): 1=32 запис голосу, 2=33 стоп мікрофона,
-                                  3=14 стан доріг на карті вкл/викл, 4=15 SOS (утримати 2 с)
+                                  3=14 поставити точку на карті, 4=15 SOS (утримати 2 с)
     RGB світлодіод R=13 G=4 B=2, дільник акумулятора -> 34
 
   Бібліотеки (Library Manager): PubSubClient, TinyGPSPlus, U8g2
@@ -20,7 +20,12 @@
     * акселерометр 200 Гц  -> MQTT rivnohid/rv7f3k/live   -> сторінка /live
     * стан пристрою         -> MQTT rivnohid/rv7f3k/status (retained)
     * події (запис, SOS...) -> MQTT rivnohid/rv7f3k/event
-    * голос, позначки, SOS  -> Supabase (RPC device_*)     -> карта сайту
+    * точки, голос, SOS     -> Supabase (RPC device_*)     -> карта і навігатор сайту
+    * GPS-трек зі струсом   -> Supabase device_add_track    -> «обстежені дороги» в навігаторі
+
+  Точки (кнопка 3): ставиться точка там, де натиснули, з кольором стану дороги за останні 10 с.
+  Якщо протягом 2 хв після цього записати голос (кнопка 1 → 2), запис прив'язується до цієї точки.
+  Запис без точки сам створює точку там, де його почали. Текст до точки пишуть на сайті.
 */
 
 #include <WiFi.h>
@@ -47,7 +52,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "2.7"
+#define FW_VERSION "3.0"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -78,8 +83,13 @@ const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключен
 #define REC_RATE_IN      16000       // частота мікрофона
 #define REC_RATE_OUT     8000        // частота у файлі (голос, менше трафіку)
 #define REC_MAX_MS       60000       // максимум 60 с на нотатку
-#define ROAD_WINDOW_MS   10000       // кнопка 3: позначка раз на 10 с
-#define ROAD_MIN_MOVE_M  10.0        // ...якщо візок проїхав хоча б 10 м
+#define POINT_LINK_MS    120000      // голос, записаний протягом 2 хв після кнопки 3, іде в цю точку
+#define FIX_KEEP_MS      120000      // останній GPS-фікс вважаємо дійсним ще 2 хв (для точки без фіксу)
+#define TRACK_EVERY_MS   3000        // точка треку раз на 3 с...
+#define TRACK_MIN_MOVE_M 3.0         // ...якщо пристрій зрушив хоча б на 3 м
+#define TRACK_SEND_MS    20000       // надсилати трек раз на 20 с
+#define TRACK_CAP        600         // у RAM до 600 точок (30 хв без мережі)
+#define TRACK_BATCH      100         // точок в одному запиті
 #define SOS_HOLD_MS      2000
 #define HELLO_EVERY_MS   600000      // оновлювати номер SOS з сайту раз на 10 хв
 #define MIC_SHIFT        12          // підсилення мікрофона: менше число = гучніше
@@ -110,12 +120,27 @@ float    lastRms = 0;
 String   publishedState = "";
 bool     diagDirty = true;      // треба (пере)опублікувати діагностику
 
-// Кнопка 3: стан доріг на карті
-bool     roadMode = false;
-uint32_t roadWinStart = 0;
-double   roadSumSq = 0; uint32_t roadN = 0; float roadPeak = 0;
-double   roadLastLat = 0, roadLastLon = 0; bool roadHasLast = false;
-uint32_t roadMarks = 0;
+// Стан дороги за останні 10 с: RMS² і пік кожного пакета (100 мс)
+#define RING_N 100
+float    ringSq[RING_N], ringPk[RING_N];
+uint8_t  ringHead = 0, ringFill = 0;
+
+// Останній надійний GPS-фікс
+double   fixLat = NAN, fixLon = NAN;
+uint32_t fixMs = 0;
+
+// Кнопка 3: точки
+uint16_t pointSeq = 0;               // номер останньої точки (з 1 після ввімкнення)
+uint32_t pointAt = 0;                // коли її поставили
+uint16_t pointsSent = 0;
+uint16_t recPointSeq = 0;            // до якої точки йде поточний запис (0 — створити нову)
+
+// Трек: кільцевий буфер точок, поки не підтвердить сервер
+struct TrackPt { float lat, lon; int16_t rmsMg; uint32_t ms; };
+TrackPt  track[TRACK_CAP];
+uint16_t trackHead = 0, trackCount = 0, trackInFlight = 0;
+double   trackLastLat = NAN, trackLastLon = NAN;
+uint32_t trackSaved = 0;
 
 // Голос
 volatile bool recording = false;
@@ -148,20 +173,23 @@ String   toast1, toast2;
 uint32_t toastUntil = 0;
 
 // ---------------- Задачі мережі (окреме ядро) ----------------
-enum JobType : uint8_t { JOB_HELLO, JOB_MARKER, JOB_VOICE, JOB_SOS };
+enum JobType : uint8_t { JOB_HELLO, JOB_POINT, JOB_VOICE, JOB_SOS, JOB_TRACK };
 struct Job {
   JobType type;
   double  lat, lon;
   int32_t durMs;
   char    sev[8];
   char    path[32];
-  uint8_t* mem;        // нотатка в RAM (коли немає SD), звільняє netTask
+  uint8_t* mem;        // нотатка в RAM (коли немає SD) або JSON треку; звільняє netTask
   uint32_t memLen;
-  char    desc[48];
+  float   rms;
   bool    called;
+  uint16_t pointSeq;   // JOB_POINT: номер точки; JOB_VOICE: до якої точки прив'язати (0 — нова)
+  uint16_t n;          // JOB_TRACK: скільки точок у пачці
 };
-enum ResType : uint8_t { RES_VOICE_OK, RES_VOICE_FAIL, RES_MARKER_OK, RES_MARKER_FAIL, RES_SOS_OK, RES_SOS_FAIL, RES_HELLO_OK, RES_HELLO_FAIL };
-struct Result { ResType type; char id[40]; double lat, lon; int32_t durMs; };
+enum ResType : uint8_t { RES_VOICE_OK, RES_VOICE_FAIL, RES_POINT_OK, RES_POINT_FAIL, RES_SOS_OK, RES_SOS_FAIL,
+                         RES_HELLO_OK, RES_HELLO_FAIL, RES_TRACK_OK, RES_TRACK_FAIL };
+struct Result { ResType type; char id[40]; double lat, lon; int32_t durMs; uint16_t n; char sev[8]; };
 QueueHandle_t jobQ, resQ;
 int voiceInFlight = 0;          // скільки нотаток зараз у черзі/надсилаються
 
@@ -196,6 +224,33 @@ void mqttEvent(const char* json) {
 }
 
 String fmtCoord(double v) { return isnan(v) ? String("null") : String(v, 6); }
+
+// Координата для точки чи запису: поточний фікс або останній за 2 хв
+bool bestFix(double& lat, double& lon) {
+  if (gpsFix()) { lat = gps.location.lat(); lon = gps.location.lng(); return true; }
+  if (fixMs && millis() - fixMs < FIX_KEEP_MS) { lat = fixLat; lon = fixLon; return true; }
+  lat = lon = NAN; return false;
+}
+
+// RMS і пік за останні n пакетів (n×100 мс)
+float ringRms(int n) {
+  n = min(n, (int)ringFill); if (n <= 0) return 0;
+  double s = 0;
+  for (int i = 0; i < n; i++) s += ringSq[(ringHead + RING_N - 1 - i) % RING_N];
+  return sqrtf(s / n);
+}
+float ringPeak(int n) {
+  n = min(n, (int)ringFill); float p = 0;
+  for (int i = 0; i < n; i++) p = max(p, ringPk[(ringHead + RING_N - 1 - i) % RING_N]);
+  return p;
+}
+// Стан дороги за 10 с — ті самі межі, що на сторінці /live
+const char* roadSeverity() {
+  if (!sensorOk || !ringFill) return "ok";
+  float rms = ringRms(RING_N), pk = ringPeak(RING_N);
+  return (rms >= 0.14f || pk >= BUMP_G) ? "bad" : rms >= 0.06f ? "warning" : "ok";
+}
+bool pointActive() { return pointSeq && millis() - pointAt < POINT_LINK_MS; }
 
 // =====================================================================
 //                       MPU6050 (через апаратний FIFO)
@@ -484,9 +539,28 @@ String jsonStr(const String& s, const char* key) {
   return j > i ? s.substring(i + 1, j) : "";
 }
 
-void sendResult(ResType t, const String& id = "", double lat = NAN, double lon = NAN, int32_t dur = 0) {
+void sendResult(ResType t, const String& id = "", double lat = NAN, double lon = NAN, int32_t dur = 0,
+                uint16_t n = 0, const char* sev = "") {
   Result r{}; r.type = t; strlcpy(r.id, id.c_str(), sizeof(r.id)); r.lat = lat; r.lon = lon; r.durMs = dur;
+  r.n = n; strlcpy(r.sev, sev, sizeof(r.sev));
   xQueueSend(resQ, &r, 0);
+}
+
+// Номер точки на пристрої → її uuid на сервері (лише в netTask)
+struct PointId { uint16_t seq; char id[40]; };
+PointId pointIds[8];
+uint8_t pointIdNext = 0;
+String pointUuid(uint16_t seq) {
+  if (!seq) return "";
+  for (auto& p : pointIds) if (p.seq == seq) return String(p.id);
+  return "";
+}
+
+// Прив'язка голосу до точки і стан дороги для автоматичної точки
+String voiceExtra(const Job& j) {
+  String id = pointUuid(j.pointSeq);
+  return String(",\"p_point_id\":") + (id.length() ? "\"" + id + "\"" : String("null")) +
+         ",\"p_severity\":\"" + (j.sev[0] ? j.sev : "ok") + "\"";
 }
 
 void netTask(void*) {
@@ -508,11 +582,24 @@ void netTask(void*) {
         sendResult(RES_HELLO_OK);
       } else sendResult(RES_HELLO_FAIL);
 
-    } else if (j.type == JOB_MARKER) {
+    } else if (j.type == JOB_POINT) {
       String js = "{" + tok + ",\"p_lat\":" + fmtCoord(j.lat) + ",\"p_lng\":" + fmtCoord(j.lon) +
-                  ",\"p_severity\":\"" + j.sev + "\",\"p_description\":\"" + j.desc + "\"}";
-      code = rpcJson("device_add_marker", js, resp);
-      sendResult(code == 200 ? RES_MARKER_OK : RES_MARKER_FAIL, jsonStr("{\"x\":" + resp + "}", "x"), j.lat, j.lon);
+                  ",\"p_severity\":\"" + j.sev + "\",\"p_rms\":" + (isnan(j.rms) ? String("null") : String(j.rms, 3)) + "}";
+      for (int attempt = 0; attempt < 3 && code != 200; attempt++) {
+        code = rpcJson("device_add_point", js, resp);
+        if (code != 200) vTaskDelay(pdMS_TO_TICKS(3000));
+      }
+      String id = jsonStr("{\"x\":" + resp + "}", "x");
+      if (code == 200 && id.length()) {
+        PointId& p = pointIds[pointIdNext++ % 8]; p.seq = j.pointSeq; strlcpy(p.id, id.c_str(), sizeof(p.id));
+      }
+      sendResult(code == 200 ? RES_POINT_OK : RES_POINT_FAIL, id, j.lat, j.lon, 0, j.pointSeq, j.sev);
+
+    } else if (j.type == JOB_TRACK) {
+      String js = "{" + tok + ",\"p_points\":" + String((const char*)j.mem) + "}";
+      free(j.mem);
+      code = rpcJson("device_add_track", js, resp);
+      sendResult(code == 200 ? RES_TRACK_OK : RES_TRACK_FAIL, "", NAN, NAN, 0, j.n);
 
     } else if (j.type == JOB_SOS) {
       String js = "{" + tok + ",\"p_lat\":" + fmtCoord(j.lat) + ",\"p_lng\":" + fmtCoord(j.lon) +
@@ -526,7 +613,7 @@ void netTask(void*) {
     } else if (j.type == JOB_VOICE && j.mem) {         // нотатка з RAM
       String head = "{" + tok + ",\"p_lat\":" + fmtCoord(j.lat) + ",\"p_lng\":" + fmtCoord(j.lon) +
                     ",\"p_duration_ms\":" + String(j.durMs) + ",\"p_sample_rate\":" + String(REC_RATE_OUT) +
-                    ",\"p_audio_b64\":\"";
+                    voiceExtra(j) + ",\"p_audio_b64\":\"";
       for (int attempt = 0; attempt < 3 && code != 200; attempt++) {
         B64Body body(head, j.mem, j.memLen, "\"}");
         Serial.printf("Надсилаю нотатку з RAM (%u байт)\n", (unsigned)j.memLen);
@@ -544,7 +631,7 @@ void netTask(void*) {
       if (!f) { xSemaphoreGive(sdMutex); sendResult(RES_VOICE_FAIL); continue; }
       String head = "{" + tok + ",\"p_lat\":" + fmtCoord(j.lat) + ",\"p_lng\":" + fmtCoord(j.lon) +
                     ",\"p_duration_ms\":" + String(j.durMs) + ",\"p_sample_rate\":" + String(REC_RATE_OUT) +
-                    ",\"p_audio_b64\":\"";
+                    voiceExtra(j) + ",\"p_audio_b64\":\"";
       Serial.printf("Надсилаю %s (%u байт), вільно %u, блок %u\n", j.path, (unsigned)f.size(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       for (int attempt = 0; attempt < 3 && code != 200; attempt++) {
         if (attempt) { f.seek(0); xSemaphoreGive(sdMutex); vTaskDelay(pdMS_TO_TICKS(4000)); xSemaphoreTake(sdMutex, portMAX_DELAY); }
@@ -561,7 +648,7 @@ void netTask(void*) {
         sendResult(RES_VOICE_FAIL);
       }
     }
-    if (code != 200 && j.type != JOB_VOICE) Serial.printf("RPC %d: %d %s\n", j.type, code, resp.c_str());
+    if (code != 200 && j.type != JOB_VOICE && j.type != JOB_TRACK) Serial.printf("RPC %d: %d %s\n", j.type, code, resp.c_str());
   }
 }
 
@@ -648,12 +735,12 @@ void recStartNote() {
     recBuf = xStreamBufferCreate(8 * 1024, 1);
     if (!recBuf) { free(ramRec); ramRec = nullptr; recToRam = false; toast("Мало пам'яті", "встав SD-картку"); return; }
     if (!micStart()) { vStreamBufferDelete(recBuf); recBuf = nullptr; free(ramRec); ramRec = nullptr; recToRam = false; toast("Мікрофон", "помилка I2S"); return; }
-    recLat = gpsFix() ? gps.location.lat() : NAN;
-    recLon = gpsFix() ? gps.location.lng() : NAN;
+    bestFix(recLat, recLon);
+    recPointSeq = pointActive() ? pointSeq : 0;
     recording = true; recStart = millis(); recSamples = 0; recDc = 0; recDcInit = false;
     recActive = true;
     char ev[160];
-    snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str());
+    snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s,\"point\":%u}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str(), recPointSeq);
     mqttEvent(ev);
     Serial.printf("Запис у RAM, до %lu с\n", (unsigned long)((ramCap - 44) / REC_RATE_OUT));
     return;
@@ -674,14 +761,14 @@ void recStartNote() {
     xSemaphoreTake(sdMutex, portMAX_DELAY); recFile.close(); SD.remove(recPath); xSemaphoreGive(sdMutex);
     toast("Мікрофон", "помилка запуску"); return;
   }
-  recLat = gpsFix() ? gps.location.lat() : NAN;
-  recLon = gpsFix() ? gps.location.lng() : NAN;
+  bestFix(recLat, recLon);
+  recPointSeq = pointActive() ? pointSeq : 0;
   recording = true; recStart = millis(); recSamples = 0; recDc = 0; recDcInit = false;
   recActive = true;
   char ev[160];
-  snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str());
+  snprintf(ev, sizeof(ev), "{\"type\":\"rec\",\"on\":true,\"lat\":%s,\"lon\":%s,\"point\":%u}", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str(), recPointSeq);
   mqttEvent(ev);
-  Serial.printf("Запис %s\n", recPath);
+  Serial.printf("Запис %s%s\n", recPath, recPointSeq ? (" → точка " + String(recPointSeq)).c_str() : " (нова точка)");
 }
 
 // Переписати накопичене з recBuf на SD
@@ -735,10 +822,12 @@ void recStopNote() {
     if (dur < 500) { free(ramRec); ramRec = nullptr; toast("Запис закороткий", "нотатку не збережено"); return; }
     wavHeaderBytes(ramRec, bytes, 8);
     Job j{}; j.type = JOB_VOICE; j.lat = recLat; j.lon = recLon; j.durMs = dur; j.mem = ramRec; j.memLen = ramLen;
+    j.pointSeq = recPointSeq; strlcpy(j.sev, roadSeverity(), sizeof(j.sev));
     ramRec = nullptr;                                 // тепер буфером володіє netTask
     if (xQueueSend(jobQ, &j, 0) != pdTRUE) { free(j.mem); toast("Черга повна", "нотатку втрачено"); return; }
     voiceInFlight++;
-    toast("Нотатку записано", WiFi.status() == WL_CONNECTED ? "надсилаю на сайт..." : "надішлю, коли буде мережа", 3000);
+    toast(recPointSeq ? "Голос → точка " + String(recPointSeq) : String("Нотатку записано"),
+          WiFi.status() == WL_CONNECTED ? "надсилаю на сайт..." : "надішлю, коли буде мережа", 3000);
     return;
   }
   uint32_t bytes = recSamples * 2;
@@ -759,8 +848,10 @@ void recStopNote() {
   if (m) { m.printf("%s,%s,%ld\n", fmtCoord(recLat).c_str(), fmtCoord(recLon).c_str(), (long)dur); m.close(); }
   xSemaphoreGive(sdMutex);
   Job j{}; j.type = JOB_VOICE; j.lat = recLat; j.lon = recLon; j.durMs = dur; strlcpy(j.path, recPath, sizeof(j.path));
+  j.pointSeq = recPointSeq; strlcpy(j.sev, roadSeverity(), sizeof(j.sev));
   queueJob(j);
-  toast("Нотатку збережено", WiFi.status() == WL_CONNECTED ? "надсилаю на сайт..." : "надішлю, коли буде мережа", 3000);
+  toast(recPointSeq ? "Голос → точка " + String(recPointSeq) : String("Нотатку збережено"),
+        WiFi.status() == WL_CONNECTED ? "надсилаю на сайт..." : "надішлю, коли буде мережа", 3000);
 }
 
 // Нотатки, що не встигли піти до вимкнення
@@ -922,31 +1013,69 @@ void sosHangup() {
 }
 
 // =====================================================================
-//                          Кнопка 3: стан доріг
+//                        Кнопка 3: точка на карті
 // =====================================================================
-void roadToggle() {
-  roadMode = !roadMode;
-  roadWinStart = millis(); roadSumSq = 0; roadN = 0; roadPeak = 0; roadHasLast = false;
-  toast(roadMode ? "Карта доріг: ВКЛ" : "Карта доріг: ВИКЛ",
-        roadMode ? (gpsFix() ? "позначка раз на 10 с" : "чекаю GPS...") : String("позначок: ") + roadMarks);
-  mqttEvent(roadMode ? "{\"type\":\"road\",\"on\":true}" : "{\"type\":\"road\",\"on\":false}");
+void pointAdd() {
+  double lat, lon;
+  if (!bestFix(lat, lon)) { toast("Немає GPS", "точку не поставлено", 3000); return; }
+  pointSeq++; pointAt = millis();
+  Job j{}; j.type = JOB_POINT; j.lat = lat; j.lon = lon; j.pointSeq = pointSeq;
+  j.rms = sensorOk ? ringRms(RING_N) : NAN;
+  strlcpy(j.sev, roadSeverity(), sizeof(j.sev));
+  queueJob(j);
+  const char* sv = !strcmp(j.sev, "bad") ? "погано" : !strcmp(j.sev, "warning") ? "нерівно" : "рівно";
+  toast("Точка " + String(pointSeq) + " (" + sv + ")", "1 = голос до неї", 4000);
+  char ev[180];
+  snprintf(ev, sizeof(ev), "{\"type\":\"point\",\"n\":%u,\"lat\":%.6f,\"lon\":%.6f,\"sev\":\"%s\",\"sent\":false}", pointSeq, lat, lon, j.sev);
+  mqttEvent(ev);
 }
 
-void roadTick() {
-  if (!roadMode || millis() - roadWinStart < ROAD_WINDOW_MS) return;
-  float rms = roadN ? sqrtf(roadSumSq / roadN) : 0;
-  float pk = roadPeak;
-  roadWinStart = millis(); roadSumSq = 0; roadN = 0; roadPeak = 0;
+// =====================================================================
+//                     GPS-трек зі станом дороги
+// =====================================================================
+void trackTick() {
+  static uint32_t last = 0;
+  if (gpsFix()) { fixLat = gps.location.lat(); fixLon = gps.location.lng(); fixMs = millis(); }
+  if (millis() - last < TRACK_EVERY_MS) return;
+  last = millis();
   if (!gpsFix()) return;
   double lat = gps.location.lat(), lon = gps.location.lng();
-  if (roadHasLast && TinyGPSPlus::distanceBetween(lat, lon, roadLastLat, roadLastLon) < ROAD_MIN_MOVE_M) return;
-  roadLastLat = lat; roadLastLon = lon; roadHasLast = true;
-  // Ті самі межі, що на сторінці /live
-  const char* sev = (rms >= 0.14f || pk >= BUMP_G) ? "bad" : rms >= 0.06f ? "warning" : "ok";
-  Job j{}; j.type = JOB_MARKER; j.lat = lat; j.lon = lon; strlcpy(j.sev, sev, sizeof(j.sev));
-  snprintf(j.desc, sizeof(j.desc), "Авто: RMS %.2f g, пік %.2f g", rms, pk);
-  queueJob(j);
-  roadMarks++;
+  if (!isnan(trackLastLat) && TinyGPSPlus::distanceBetween(lat, lon, trackLastLat, trackLastLon) < TRACK_MIN_MOVE_M) return;
+  trackLastLat = lat; trackLastLon = lon;
+  if (trackCount == TRACK_CAP) {
+    if (trackInFlight >= trackCount) return;          // усе вже надсилається — нову точку пропускаємо
+    trackHead = (trackHead + 1) % TRACK_CAP; trackCount--;   // найстаріша точка, що не надсилається
+    if (trackInFlight) trackInFlight--;               // (у пачці лишаться ті самі точки, просто без першої)
+  }
+  TrackPt& t = track[(trackHead + trackCount) % TRACK_CAP];
+  t.lat = lat; t.lon = lon; t.ms = millis();
+  t.rmsMg = sensorOk ? (int16_t)min(30000L, lroundf(ringRms(30) * 1000)) : -1;   // за останні 3 с
+  trackCount++;
+}
+
+void trackSend() {
+  static uint32_t last = 0;
+  if (trackInFlight || !trackCount || WiFi.status() != WL_CONNECTED) return;
+  if (trackCount < TRACK_BATCH && millis() - last < TRACK_SEND_MS) return;
+  last = millis();
+  uint16_t n = min((uint16_t)TRACK_BATCH, trackCount);
+  String js; js.reserve(n * 42 + 4);
+  js = "[";
+  for (uint16_t i = 0; i < n; i++) {
+    const TrackPt& t = track[(trackHead + i) % TRACK_CAP];
+    char b[64];
+    snprintf(b, sizeof(b), "%s[%.6f,%.6f,", i ? "," : "", t.lat, t.lon);
+    js += b;
+    if (t.rmsMg < 0) js += "null"; else { snprintf(b, sizeof(b), "%.3f", t.rmsMg / 1000.0f); js += b; }
+    snprintf(b, sizeof(b), ",%lu]", (unsigned long)((millis() - t.ms) / 1000));
+    js += b;
+  }
+  js += "]";
+  char* mem = strdup(js.c_str());
+  if (!mem) return;
+  Job j{}; j.type = JOB_TRACK; j.mem = (uint8_t*)mem; j.n = n;
+  if (xQueueSend(jobQ, &j, 0) != pdTRUE) { free(mem); return; }
+  trackInFlight = n;
 }
 
 // =====================================================================
@@ -955,14 +1084,16 @@ void roadTick() {
 void sendBatch() {
   float rms = sqrtf(sumSq / BATCH);
   lastRms = rms;
+  ringSq[ringHead] = rms * rms; ringPk[ringHead] = peak;
+  ringHead = (ringHead + 1) % RING_N; if (ringFill < RING_N) ringFill++;
   bool bump = (peak >= BUMP_G) && (millis() - lastBumpMs > 700);
   if (bump) { lastBumpMs = millis(); bumpLedUntil = millis() + 200; }
 
   static char buf[900];
   int p = snprintf(buf, sizeof(buf), "{\"seq\":%lu,\"t\":%lu,\"hz\":%d,\"a\":[", (unsigned long)seq++, (unsigned long)millis(), SAMPLE_HZ);
   for (int i = 0; i < BATCH; i++) p += snprintf(buf + p, sizeof(buf) - p, i ? ",%d" : "%d", batchBuf[i]);
-  p += snprintf(buf + p, sizeof(buf) - p, "],\"rms\":%.3f,\"pk\":%.3f,\"bump\":%d,\"mark\":0,\"bat\":%.2f,\"rec\":%d,\"road\":%d",
-                rms, peak, bump ? 1 : 0, batteryV(), recording ? 1 : 0, roadMode ? 1 : 0);
+  p += snprintf(buf + p, sizeof(buf) - p, "],\"rms\":%.3f,\"pk\":%.3f,\"bump\":%d,\"mark\":0,\"bat\":%.2f,\"rec\":%d,\"pt\":%u",
+                rms, peak, bump ? 1 : 0, batteryV(), recording ? 1 : 0, pointActive() ? pointSeq : 0);
   if (gpsFix())
     p += snprintf(buf + p, sizeof(buf) - p, ",\"lat\":%.6f,\"lon\":%.6f,\"spd\":%.1f,\"sat\":%d",
                   gps.location.lat(), gps.location.lng(), gps.speed.kmph(), (int)gps.satellites.value());
@@ -973,8 +1104,9 @@ void sendBatch() {
 
   static uint8_t k = 0;
   if (++k % 50 == 0) {
-    Serial.printf("rms=%.3f mqtt=%d wifi=%d sat=%d bad=%lu rec=%d road=%d heap=%u\n", rms, mqtt.connected(),
-                  WiFi.status() == WL_CONNECTED, (int)gps.satellites.value(), (unsigned long)badReads, recording, roadMode, ESP.getFreeHeap());
+    Serial.printf("rms=%.3f mqtt=%d wifi=%d gps=%d sat=%d bad=%lu rec=%d точок=%u трек=%u/%lu heap=%u\n", rms, mqtt.connected(),
+                  WiFi.status() == WL_CONNECTED, gpsFix(), (int)gps.satellites.value(), (unsigned long)badReads, recording,
+                  pointSeq, trackCount, (unsigned long)trackSaved, ESP.getFreeHeap());
     badReads = 0;
   }
   batchN = 0; sumSq = 0; peak = 0;
@@ -984,7 +1116,6 @@ void onSample(float av) {
   batchBuf[batchN++] = (int16_t)lroundf(av * 1000.0f);
   sumSq += av * av;
   if (fabsf(av) > peak) peak = fabsf(av);
-  if (roadMode) { roadSumSq += av * av; roadN++; if (fabsf(av) > roadPeak) roadPeak = fabsf(av); }
   if (batchN >= BATCH) sendBatch();
 }
 
@@ -1008,7 +1139,7 @@ void drawScreen() {
   } else if (recording) {
     uint32_t s = (millis() - recStart) / 1000;
     char t[24]; snprintf(t, sizeof(t), "%lu:%02lu", (unsigned long)(s / 60), (unsigned long)(s % 60));
-    l1 = String((millis() / 500) % 2 ? "* " : "  ") + "Запис голосу " + t;
+    l1 = String((millis() / 500) % 2 ? "* " : "  ") + (recPointSeq ? "Точка " + String(recPointSeq) + " " : String("Запис ")) + t;
     l2 = recToRam ? "Стоп: 2 (макс " + String((ramCap - 44) / REC_RATE_OUT) + " с)" : String("Стоп: кнопка 2");
   } else if (millis() < toastUntil) {
     l1 = toast1; l2 = toast2;
@@ -1020,7 +1151,8 @@ void drawScreen() {
     float v = batteryV();
     if (v > 2.5f) l1 += "  " + String(constrain((int)((v - 3.3f) / 0.9f * 100), 0, 100)) + "%";
     l2 = sensorOk ? String(lvl) + " " + idx : String("Датчик не відповідає");
-    if (roadMode) l2 += "  Карта";
+    if (pointActive()) l2 = "Точка " + String(pointSeq) + ": 1=голос";
+    else if (pointSeq) l2 += "  Т:" + String(pointSeq);
   }
 
   static String p1, p2;
@@ -1046,7 +1178,7 @@ void handleButtons() {
       b.down = true; b.since = millis(); b.longFired = false;
       if (i == 0) recStartNote();
       if (i == 1) recStopNote();
-      if (i == 2) roadToggle();
+      if (i == 2) pointAdd();
       if (i == 3) {
         if (sosCalling || millis() < sosShownUntil) { sosHangup(); b.longFired = true; }
         else toast("SOS: тримай 2 с", "відпусти, щоб скасувати", 2200);
@@ -1075,10 +1207,19 @@ void handleResults() {
         mqttEvent(ev);
         break;
       case RES_VOICE_FAIL: voiceInFlight--; toast("Нотатка не пішла", "спробую пізніше"); break;
-      case RES_MARKER_OK:
-        snprintf(ev, sizeof(ev), "{\"type\":\"marker\",\"lat\":%s,\"lon\":%s}", fmtCoord(r.lat).c_str(), fmtCoord(r.lon).c_str());
+      case RES_POINT_OK:
+        pointsSent++;
+        snprintf(ev, sizeof(ev), "{\"type\":\"point\",\"n\":%u,\"id\":\"%s\",\"lat\":%s,\"lon\":%s,\"sev\":\"%s\",\"sent\":true}",
+                 r.n, r.id, fmtCoord(r.lat).c_str(), fmtCoord(r.lon).c_str(), r.sev);
         mqttEvent(ev);
+        if (!recording) toast("Точка " + String(r.n) + " на карті", pointActive() ? "1 = голос до неї" : "");
         break;
+      case RES_POINT_FAIL: toast("Точка " + String(r.n), "не дійшла на сайт"); break;
+      case RES_TRACK_OK:
+        for (uint16_t k = 0; k < r.n && trackCount; k++) { trackHead = (trackHead + 1) % TRACK_CAP; trackCount--; }
+        trackSaved += r.n; trackInFlight = 0;
+        break;
+      case RES_TRACK_FAIL: trackInFlight = 0; Serial.println("Трек не надіслано, спробую ще"); break;
       case RES_SOS_FAIL: toast("SOS не дійшов", "на сайт!"); break;
       case RES_HELLO_OK:
         xSemaphoreTake(sosMutex, portMAX_DELAY);
@@ -1194,7 +1335,7 @@ void loop() {
       if (mpuInit()) lastGoodRead = millis() - 1000; else sensorOk = false;
     }
   }
-  roadTick();
+  trackTick();
   recPump();
 
   // Мережа
@@ -1214,6 +1355,7 @@ void loop() {
   mqtt.loop();
   handleResults();
   retryFailedNotes();
+  trackSend();
   gsmPoll();
   drawScreen();
 
