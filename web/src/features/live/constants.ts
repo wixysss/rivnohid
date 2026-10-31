@@ -8,6 +8,7 @@ export const MQTT_DIAG_TOPIC = 'rivnohid/rv7f3k/diag'        // що підкл�
 export type DeviceDiag = {
     fw: string, sd: 0 | 1, mic: 0 | 1, oled: 0 | 1, gsm: 0 | 1, mpu: 0 | 1, sos: 0 | 1, ssid?: string, ip?: string
     sim?: 0 | 1, reg?: 0 | 1, csq?: number   // SIM800L: SIM-картка, реєстрація в мережі, сигнал 0..31 (99 = невідомо)
+    i2c?: string                              // адреси на шині I2C, напр. "3C,68" (екран 3C/3D, акселерометр 68)
 }
 export const MQTT_SUBSCRIBE = 'rivnohid/rv7f3k/#'
 

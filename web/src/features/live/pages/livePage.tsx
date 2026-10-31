@@ -72,6 +72,12 @@ const DiagRow = ({diag}: { diag: DeviceDiag }) => {
                 </span>
             ))}
             <span className={`rounded-full px-2 py-0.5 ${gsm.cls}`}>{gsm.text}</span>
+            {diag.i2c != null && (!diag.oled || !diag.mpu) && (
+                <span className='text-zinc-500'>
+                    На шині I2C: {diag.i2c || 'нікого'}
+                    {!diag.oled && ' · екран (3C) не відповідає: перевір його VCC, GND, SDA, SCL'}
+                </span>
+            )}
         </div>
     )
 }

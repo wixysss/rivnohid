@@ -52,7 +52,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "3.0"
+#define FW_VERSION "3.1"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -275,13 +275,48 @@ bool mpuReadDirect(float& ax, float& ay, float& az) {
   return (ax * ax + ay * ay + az * az) < 49.0f;
 }
 
+String i2cFound;                 // що відповіло на шині I2C, напр. "3C,68" (йде в діагностику)
 void i2cScan() {
-  Serial.print("I2C: ");
+  String f;
   for (uint8_t a = 1; a < 127; a++) {
     Wire.beginTransmission(a);
-    if (Wire.endTransmission() == 0) Serial.printf("0x%02X ", a);
+    if (Wire.endTransmission() == 0) { char b[4]; snprintf(b, sizeof(b), "%02X", a); if (f.length()) f += ","; f += b; }
   }
-  Serial.println();
+  if (f != i2cFound) { i2cFound = f; diagDirty = true; }
+  Serial.printf("I2C: %s\n", f.length() ? f.c_str() : "нічого");
+}
+
+// Екран: шукаємо на 0x3C і 0x3D. Якщо на старті не відповів (погано тримає дріт або
+// повільно прокинувся після ввімкнення), loop() пробує ще раз кожні 3 с.
+uint8_t oledAddr = 0;
+bool    oledFresh = false;       // щойно ініціалізований — перемалювати
+bool oledTryInit() {
+  for (uint8_t a : {0x3C, 0x3D}) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission() != 0) continue;
+    oled.setI2CAddress(a * 2);
+    oled.setBusClock(100000);
+    oled.begin();
+    oled.enableUTF8Print();
+    oled.setFont(u8g2_font_6x13_t_cyrillic);
+    oledAddr = a; oledOk = true; oledFresh = true; diagDirty = true;
+    Serial.printf("OLED: 0x%02X\n", a);
+    return true;
+  }
+  return false;
+}
+
+// Екран зник (відійшов дріт) — позначити; з'явився — ініціалізувати заново
+void oledWatch() {
+  static uint32_t last = 0;
+  if (millis() - last < 3000) return;
+  last = millis();
+  if (oledOk) {
+    Wire.beginTransmission(oledAddr);
+    if (Wire.endTransmission() != 0) { oledOk = false; diagDirty = true; Serial.println("OLED: зник"); i2cScan(); }
+  } else if (oledTryInit()) {
+    i2cScan();
+  }
 }
 
 void mpuFifoReset() {
@@ -420,11 +455,11 @@ void publishDiag() {
   if (!mqtt.connected() || !diagDirty) return;
   char phoneSet;
   xSemaphoreTake(sosMutex, portMAX_DELAY); phoneSet = sosPhone[0] ? 1 : 0; xSemaphoreGive(sosMutex);
-  char js[256];
+  char js[320];
   snprintf(js, sizeof(js),
-           "{\"fw\":\"%s\",\"sd\":%d,\"mic\":%d,\"oled\":%d,\"gsm\":%d,\"sim\":%d,\"reg\":%d,\"csq\":%d,\"mpu\":%d,\"sos\":%d,\"ssid\":\"%s\",\"ip\":\"%s\"}",
+           "{\"fw\":\"%s\",\"sd\":%d,\"mic\":%d,\"oled\":%d,\"gsm\":%d,\"sim\":%d,\"reg\":%d,\"csq\":%d,\"mpu\":%d,\"sos\":%d,\"ssid\":\"%s\",\"ip\":\"%s\",\"i2c\":\"%s\"}",
            FW_VERSION, sdOk, micOk, oledOk, gsmOk, gsmSim, gsmReg, gsmCsq, sensorOk, phoneSet,
-           WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+           WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), i2cFound.c_str());
   if (mqtt.publish(MQTT_DIAG, js, true)) diagDirty = false;
 }
 
@@ -1156,7 +1191,8 @@ void drawScreen() {
   }
 
   static String p1, p2;
-  if (l1 == p1 && l2 == p2 && !recording) return;
+  if (l1 == p1 && l2 == p2 && !recording && !oledFresh) return;
+  oledFresh = false;
   p1 = l1; p2 = l2;
   oled.clearBuffer();
   oled.setCursor(0, 13); oled.print(l1);
@@ -1234,6 +1270,19 @@ void handleResults() {
   }
 }
 
+// SD-картка не знайшлась (погано вставлена чи відійшов дріт) — пробуємо знову раз на 10 с
+void sdWatch() {
+  static uint32_t last = 0;
+  if (sdOk || recording || voiceInFlight > 0 || millis() - last < 10000) return;
+  last = millis();
+  if (xSemaphoreTake(sdMutex, 0) != pdTRUE) return;
+  SD.end();
+  sdOk = SD.begin(PIN_SD_CS);
+  if (sdOk && !SD.exists("/rec")) SD.mkdir("/rec");
+  xSemaphoreGive(sdMutex);
+  if (sdOk) { diagDirty = true; Serial.println("SD: знайшлась"); toast("SD-картка", "знайшлась"); }
+}
+
 void retryFailedNotes() {
   static uint32_t last = 0;
   if (millis() - last < 120000 || WiFi.status() != WL_CONNECTED || voiceInFlight > 0) return;
@@ -1275,17 +1324,11 @@ void setup() {
 
   Wire.begin(PIN_SDA, PIN_SCL, 100000);
   Wire.setTimeOut(50);
+  delay(100);                                          // дешеві SSD1306 прокидаються після ESP32
   i2cScan();
-  Wire.beginTransmission(0x3C);
-  if (Wire.endTransmission() == 0) {
-    oled.setI2CAddress(0x3C * 2);
-    oled.setBusClock(100000);
-    oled.begin();
-    oled.enableUTF8Print();
-    oled.setFont(u8g2_font_6x13_t_cyrillic);
-    oledOk = true;
+  if (oledTryInit()) {
     oled.clearBuffer(); oled.setCursor(0, 13); oled.print("Рівнохід"); oled.setCursor(0, 30); oled.print("Запуск..."); oled.sendBuffer();
-  } else Serial.println("OLED 0x3C не знайдено");
+  } else Serial.println("OLED не знайдено ні на 0x3C, ні на 0x3D: перевір VCC/GND/SDA/SCL екрана");
 
   sdOk = SD.begin(PIN_SD_CS);
   Serial.println(sdOk ? "SD: OK" : "SD: немає картки");
@@ -1356,6 +1399,8 @@ void loop() {
   handleResults();
   retryFailedNotes();
   trackSend();
+  oledWatch();
+  sdWatch();
   gsmPoll();
   drawScreen();
 
