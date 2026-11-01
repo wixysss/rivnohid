@@ -105,6 +105,11 @@ export const LivePage = () => {
                             <i className='inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-white'/>Йде запис голосу
                         </span>
                     )}
+                    {store.trackOn && (
+                        <span className='flex items-center gap-2 rounded-full border border-blue-300 bg-blue-50 px-3 py-1 text-sm text-blue-800'>
+                            <i className='inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-blue-500'/>Пишеться GPS-маршрут
+                        </span>
+                    )}
                     {store.points > 0 && (
                         <span className='rounded-full border border-violet-300 bg-violet-50 px-3 py-1 text-sm text-violet-800'>
                             Точок: {store.points}{store.linkPoint ? ` · голос піде в точку ${store.linkPoint}` : ''}

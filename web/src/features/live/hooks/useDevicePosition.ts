@@ -20,7 +20,9 @@ export const useDevicePosition = () => {
                 if (topic === MQTT_STATUS_TOPIC) return setOnline(text !== 'offline' && text !== 'low_battery')
                 if (topic === MQTT_EVENT_TOPIC) {
                     try {
-                        const ev = JSON.parse(text) as { type: string, sent?: boolean }
+                        const ev = JSON.parse(text) as { type: string, sent?: boolean, on?: boolean }
+                        // Запис маршруту зупинили — за кілька секунд пристрій дошле останню пачку
+                        if (ev.type === 'track' && !ev.on) setTimeout(() => void queryClient.invalidateQueries({queryKey: ['device-track']}), 6000)
                         if ((ev.type === 'point' && ev.sent) || ev.type === 'voice') {
                             void queryClient.invalidateQueries({queryKey: ['markers']})
                             void queryClient.invalidateQueries({queryKey: ['voice-notes']})
