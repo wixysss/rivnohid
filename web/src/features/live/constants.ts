@@ -56,6 +56,7 @@ export type LivePacket = {
     road?: 0 | 1       // (прошивка 2.x) автопозначки стану доріг
     pt?: number        // номер точки, до якої зараз прив'яжеться голос (0 — немає)
     nosensor?: 0 | 1   // акселерометр не відповідає: у пакеті лише GPS і заряд
+    trk?: 0 | 1        // кнопка 2: іде запис GPS-маршруту
 }
 
 export type PointSeverity = 'ok' | 'warning' | 'bad'
@@ -65,6 +66,7 @@ export type DeviceEvent =
     | { type: 'voice', id: string, lat: number | null, lon: number | null, dur: number }
     | { type: 'sos', lat: number | null, lon: number | null, called: boolean }
     | { type: 'sos_cancel' }
+    | { type: 'track', on: boolean, n: number }
     | { type: 'road', on: boolean }
     | { type: 'marker', lat: number | null, lon: number | null }
     // Кнопка 3: точка. Спершу sent=false (поставлено на пристрої), потім sent=true з id на сервері
