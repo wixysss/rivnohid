@@ -1,7 +1,7 @@
 import {CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMap} from "react-leaflet";
 import 'leaflet/dist/leaflet.css'
 import {useEffect, useRef} from "react";
-import {MAP_CENTER, MAP_ZOOM, TILE_ATTRIBUTION, TILE_URL} from "../../map/constants.ts";
+import {MAP_CENTER, MAP_ZOOM, TILE_ATTRIBUTION, TILE_URL, WORLD_LIMITS} from "../../map/constants.ts";
 import {LEVELS} from "../constants.ts";
 import type {LiveEvent, TrackPoint} from "../liveStore.ts";
 
@@ -30,8 +30,8 @@ type Props = {
 // Маршрут візка, пофарбований за якістю дороги, + ями та поточна позиція
 export const LiveTrackMap = ({track, events, lat, lon}: Props) => (
     <div className='relative h-full min-h-60 overflow-hidden rounded-xl'>
-        <MapContainer center={MAP_CENTER} zoom={MAP_ZOOM} preferCanvas className='rv-pale h-full min-h-60 w-full'>
-            <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION}/>
+        <MapContainer center={MAP_CENTER} zoom={MAP_ZOOM} preferCanvas {...WORLD_LIMITS} className='rv-pale h-full min-h-60 w-full'>
+            <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} noWrap/>
             {track.slice(1).map((p, i) => (
                 <Polyline key={i} positions={[[track[i].lat, track[i].lon], [p.lat, p.lon]]}
                           pathOptions={{color: LEVELS[p.level].color, weight: 6, opacity: 0.95, lineCap: 'round'}}/>

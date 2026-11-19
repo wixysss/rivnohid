@@ -3,7 +3,7 @@ import 'leaflet/dist/leaflet.css'
 import type L from "leaflet";
 import * as React from "react";
 import {useEffect} from "react";
-import {BASE_LAYERS, MAP_CENTER, MAP_ZOOM} from "../constants.ts";
+import {BASE_LAYERS, MAP_CENTER, MAP_ZOOM, WORLD_LIMITS} from "../constants.ts";
 import {useMarkers} from "../hooks/useMarkers.ts";
 import {createMarkerIcon} from "../markerStyles.ts";
 import {MarkerPopup} from "./markerPopup.tsx";
@@ -43,9 +43,9 @@ export const MapView = ({children, filter, showTrack = true, showVoice = true, o
     // Клас rv-pale — на обгортці: className самої карти Leaflet не оновлює після створення
     return (
         <div className={`h-full w-full ${layer.pale ? 'rv-pale' : ''}`}>
-        <MapContainer center={MAP_CENTER} zoom={MAP_ZOOM} zoomControl={false} attributionControl={false}
+        <MapContainer center={MAP_CENTER} zoom={MAP_ZOOM} zoomControl={false} attributionControl={false} {...WORLD_LIMITS}
                       className={`h-full w-full ${className}`}>
-            <TileLayer key={layer.label} url={layer.url} attribution={layer.attribution} maxZoom={layer.maxZoom}/>
+            <TileLayer key={layer.label} url={layer.url} attribution={layer.attribution} maxZoom={layer.maxZoom} noWrap/>
             <AttributionControl position='bottomleft' prefix={false}/>
 
             {showTrack && <TrackLayer/>}
