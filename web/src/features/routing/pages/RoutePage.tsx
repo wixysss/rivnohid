@@ -33,7 +33,11 @@ export const RoutePage = () => {
     // Новий набір маршрутів — обираємо рекомендований і показуємо весь маршрут
     useEffect(() => {
         setSelected(variants[0]?.id ?? null)
-        if (map && variants.length) map.fitBounds(variants.flatMap((v) => v.path.map((p) => [p.lat, p.lng] as [number, number])), {padding: [60, 60]})
+        if (map && variants.length) {
+            const wide = window.innerWidth >= 768     // на комп'ютері зліва вгорі картка-підсумок, на телефоні знизу панель
+            map.fitBounds(variants.flatMap((v) => v.path.map((p) => [p.lat, p.lng] as [number, number])),
+                wide ? {paddingTopLeft: [290, 60], paddingBottomRight: [80, 40]} : {paddingTopLeft: [30, 30], paddingBottomRight: [70, Math.round(window.innerHeight * 0.55)]})
+        }
     }, [variants, map])
 
     useEffect(() => {
