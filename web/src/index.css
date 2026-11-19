@@ -89,11 +89,15 @@ button:disabled {
     line-height: 1.4;
 }
 
+.rv-popup .leaflet-popup-content p {
+    margin: 0;
+}
+
 .rv-popup .leaflet-popup-tip {
     box-shadow: none;
 }
 
-.rv-popup a.leaflet-popup-close-button {
+.leaflet-container .rv-popup a.leaflet-popup-close-button {
     top: 10px;
     right: 10px;
     width: 28px;
