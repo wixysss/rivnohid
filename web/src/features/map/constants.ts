@@ -1,23 +1,14 @@
 export const MAP_CENTER: [number, number] = [50.2547, 28.6587]
 export const MAP_ZOOM = 13
 
-// Справжня карта світу. За замовчуванням світла CARTO Voyager (схожа на макет),
-// а в перемикачі шарів ще класична OpenStreetMap і супутник.
+// Справжня карта світу (OpenStreetMap). У перемикачі шарів: світла, класична і супутник.
 export type BaseLayerId = 'light' | 'osm' | 'satellite'
-export const BASE_LAYERS: Record<BaseLayerId, { label: string, url: string, attribution: string, maxZoom: number, subdomains?: string }> = {
-    light: {
-        label: 'Світла',
-        url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        maxZoom: 20,
-        subdomains: 'abcd',
-    },
-    osm: {
-        label: 'Класична',
-        url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 19,
-    },
+const OSM_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+// «Світла» — та сама OpenStreetMap, але приглушена CSS-фільтром (клас rv-pale), щоб маркери читалися краще
+export const BASE_LAYERS: Record<BaseLayerId, { label: string, url: string, attribution: string, maxZoom: number, pale?: boolean }> = {
+    light: {label: 'Світла', url: OSM_URL, attribution: OSM_ATTR, maxZoom: 19, pale: true},
+    osm: {label: 'Класична', url: OSM_URL, attribution: OSM_ATTR, maxZoom: 19},
     satellite: {
         label: 'Супутник',
         url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',

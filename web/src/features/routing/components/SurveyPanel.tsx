@@ -24,11 +24,11 @@ export const SurveyPanel = ({device, onStartHere}: Props) => {
 
     return (
         <section className='rounded-2xl border border-line bg-page/50 p-4 text-sm'>
-            <div className='mb-3 flex items-center justify-between gap-2'>
+            <div className='mb-3 flex flex-col gap-1'>
                 <h2 className='rv-label'>Обстежено пристроєм</h2>
                 <span className='flex items-center gap-1.5 text-xs text-muted'>
                     <i className={`inline-block h-2 w-2 rounded-full ${device.pos ? 'animate-pulse bg-[#22a35a]' : device.online ? 'bg-lvl-uneven' : 'bg-[#c4c8c2]'}`}/>
-                    {device.pos ? 'онлайн, GPS є' : device.online ? 'онлайн, без GPS' : 'не на зв\'язку'}
+                    {device.pos ? 'Пристрій онлайн, GPS є' : device.online ? 'Пристрій онлайн, без GPS' : 'Пристрій не на зв\'язку'}
                 </span>
             </div>
 

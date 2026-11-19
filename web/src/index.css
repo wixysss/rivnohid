@@ -57,6 +57,11 @@ button:disabled {
 }
 
 /* ---------- Leaflet під новий стиль ---------- */
+/* Приглушена OpenStreetMap: менше кольору, світліше — як у макеті */
+.rv-pale .leaflet-tile-pane {
+    filter: grayscale(0.55) saturate(0.8) brightness(1.04) contrast(0.9);
+}
+
 .leaflet-container {
     font-family: var(--font-sans);
     background: #eef0ea;

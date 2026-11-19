@@ -40,11 +40,12 @@ export const MapView = ({children, filter, showTrack = true, showVoice = true, o
     const layer = BASE_LAYERS[useBaseLayer((s) => s.layer)]
     const markers = filter ? data?.filter(filter) : data
 
+    // Клас rv-pale — на обгортці: className самої карти Leaflet не оновлює після створення
     return (
+        <div className={`h-full w-full ${layer.pale ? 'rv-pale' : ''}`}>
         <MapContainer center={MAP_CENTER} zoom={MAP_ZOOM} zoomControl={false} attributionControl={false}
                       className={`h-full w-full ${className}`}>
-            <TileLayer key={layer.url} url={layer.url} attribution={layer.attribution} maxZoom={layer.maxZoom}
-                       {...(layer.subdomains ? {subdomains: layer.subdomains} : {})}/>
+            <TileLayer key={layer.label} url={layer.url} attribution={layer.attribution} maxZoom={layer.maxZoom}/>
             <AttributionControl position='bottomleft' prefix={false}/>
 
             {showTrack && <TrackLayer/>}
@@ -70,5 +71,6 @@ export const MapView = ({children, filter, showTrack = true, showVoice = true, o
             {onReady && <Ready onReady={onReady}/>}
             {children}
         </MapContainer>
+        </div>
     )
 }
