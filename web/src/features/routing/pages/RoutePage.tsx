@@ -1,7 +1,7 @@
 import {useEffect, useMemo, useState} from "react";
 import {Marker} from "react-leaflet";
 import type L from "leaflet";
-import {LuArrowUpDown, LuLocateFixed} from "react-icons/lu";
+import {LuArrowUpDown, LuChevronDown, LuChevronUp, LuLocateFixed} from "react-icons/lu";
 import {useRoutePoints} from "../hooks/useRoutePoints.ts";
 import {useRankedRoutes} from "../hooks/useRankedRoutes.ts";
 import {MapView} from "../../map/components/mapView.tsx";
@@ -16,7 +16,8 @@ import {SurveyPanel} from "../components/SurveyPanel.tsx";
 import {useDevicePosition} from "../../live/hooks/useDevicePosition.ts";
 import {DevicePositionMarker} from "../../live/components/devicePositionMarker.tsx";
 import {MOVERS, type MoverId} from "../profiles.ts";
-import {toVariants} from "../lib/variants.ts";
+import {fmtKm, fmtMin, toVariants} from "../lib/variants.ts";
+import {useIsMobile} from "../../../shared/lib/useIsMobile.ts";
 import {myLocation} from "../../../shared/lib/geocode.ts";
 
 export const RoutePage = () => {
@@ -29,14 +30,19 @@ export const RoutePage = () => {
     const [map, setMap] = useState<L.Map | null>(null)
     const [locErr, setLocErr] = useState('')
     const device = useDevicePosition()
+    const mobile = useIsMobile()
+    // Телефон: панель знизу або розгорнута, або згорнута до рядка з підсумком, щоб карту було видно
+    const [open, setOpen] = useState(true)
+    const PEEK = 112
 
     // Новий набір маршрутів — обираємо рекомендований і показуємо весь маршрут
     useEffect(() => {
         setSelected(variants[0]?.id ?? null)
+        if (variants.length) setOpen(false)
         if (map && variants.length) {
-            const wide = window.innerWidth >= 768     // на комп'ютері зліва вгорі картка-підсумок, на телефоні знизу панель
+            const wide = window.innerWidth >= 768     // на комп'ютері зліва вгорі картка-підсумок, на телефоні знизу згорнута панель
             map.fitBounds(variants.flatMap((v) => v.path.map((p) => [p.lat, p.lng] as [number, number])),
-                wide ? {paddingTopLeft: [290, 60], paddingBottomRight: [80, 40]} : {paddingTopLeft: [30, 30], paddingBottomRight: [70, Math.round(window.innerHeight * 0.55)]})
+                wide ? {paddingTopLeft: [290, 60], paddingBottomRight: [80, 40]} : {paddingTopLeft: [30, 30], paddingBottomRight: [70, PEEK + 30]})
         }
     }, [variants, map])
 
@@ -55,14 +61,32 @@ export const RoutePage = () => {
         }
     }
     const center = map ? {lat: map.getCenter().lat, lng: map.getCenter().lng} : undefined
+    const chosen = variants.find((v) => v.id === selected)
 
     return (
         <div className='flex h-dvh flex-col'>
             <NavBar mobileBar={false}/>
             <div className='relative flex min-h-0 flex-1'>
-                <aside className='fixed inset-x-0 bottom-[62px] z-[1100] flex max-h-[56vh] flex-col gap-5 overflow-y-auto rounded-t-3xl border-t border-line bg-white p-[18px] shadow-[0_-8px_30px_rgba(0,0,0,0.12)]
-                                  md:static md:z-auto md:max-h-none md:w-[340px] md:shrink-0 md:rounded-none md:border-r md:border-t-0 md:shadow-none'>
-                    <h1 className='text-2xl font-bold'>Навігатор</h1>
+                <aside style={mobile && !open ? {maxHeight: PEEK} : undefined}
+                       className={`fixed inset-x-0 bottom-[62px] z-[1100] flex max-h-[58vh] flex-col gap-5 rounded-t-3xl border-t border-line bg-white p-[18px] pt-0 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] transition-[max-height] duration-300
+                                  md:static md:z-auto md:max-h-none md:w-[340px] md:shrink-0 md:overflow-y-auto md:rounded-none md:border-r md:border-t-0 md:pt-[18px] md:shadow-none ${open ? 'overflow-y-auto' : 'overflow-hidden'}`}>
+                    {/* Телефон: ручка панелі з коротким підсумком */}
+                    <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
+                            className='sticky top-0 z-10 -mx-[18px] flex shrink-0 flex-col items-center gap-2 bg-white px-[18px] pb-1 pt-2.5 md:hidden'>
+                        <span className='h-1.5 w-10 rounded-full bg-[#d6d9d2]'/>
+                        <span className='flex w-full items-center gap-2 text-left'>
+                            {chosen ? (
+                                <span className='min-w-0 flex-1'>
+                                    <span className='block text-lg font-bold'>{fmtMin(chosen.duration)} <span className='text-sm font-medium text-muted'>· {fmtKm(chosen.distance)}</span></span>
+                                    <span className='block truncate text-xs text-muted'>{chosen.name} · Комфорт {chosen.comfort}</span>
+                                </span>
+                            ) : <span className='flex-1 text-lg font-bold'>Навігатор</span>}
+                            <span className='flex items-center gap-1 text-sm font-semibold text-brand'>
+                                {open ? <>Згорнути <LuChevronDown size={18}/></> : <>{chosen ? 'Варіанти' : 'Маршрут'} <LuChevronUp size={18}/></>}
+                            </span>
+                        </span>
+                    </button>
+                    <h1 className='hidden text-2xl font-bold md:block'>Навігатор</h1>
 
                     <section>
                         <h2 className='rv-label mb-2.5'>Хто рухається</h2>
@@ -108,7 +132,7 @@ export const RoutePage = () => {
                 </aside>
 
                 <div className='relative min-w-0 flex-1'>
-                    <MapView onReady={setMap}>
+                    <MapView onReady={setMap} controlsBottom={mobile && !open ? PEEK + 62 : 0}>
                         <ClickLayer onPick={pick}/>
                         {from && <Marker icon={createPinIcon('A', '#173d33')} position={[from.lat, from.lng]}/>}
                         {to && <Marker icon={createPinIcon('Б', '#173d33')} position={[to.lat, to.lng]}/>}

@@ -1,6 +1,10 @@
 export const MAP_CENTER: [number, number] = [50.2547, 28.6587]
 export const MAP_ZOOM = 13
 
+// Одна копія світу: не даємо віддалити карту так, щоб вона повторювалась, і прокрутити за край
+export const WORLD_BOUNDS: [[number, number], [number, number]] = [[-85, -180], [85, 180]]
+export const WORLD_LIMITS = {minZoom: 3, maxBounds: WORLD_BOUNDS, maxBoundsViscosity: 1, worldCopyJump: false} as const
+
 // Справжня карта світу (OpenStreetMap). У перемикачі шарів: світла, класична і супутник.
 export type BaseLayerId = 'light' | 'osm' | 'satellite'
 const OSM_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
