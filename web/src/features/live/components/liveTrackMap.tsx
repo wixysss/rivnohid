@@ -30,7 +30,7 @@ type Props = {
 // Маршрут візка, пофарбований за якістю дороги, + ями та поточна позиція
 export const LiveTrackMap = ({track, events, lat, lon}: Props) => (
     <div className='relative h-full min-h-60 overflow-hidden rounded-xl'>
-        <MapContainer center={MAP_CENTER} zoom={MAP_ZOOM} preferCanvas className='h-full min-h-60 w-full'>
+        <MapContainer center={MAP_CENTER} zoom={MAP_ZOOM} preferCanvas className='rv-pale h-full min-h-60 w-full'>
             <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION}/>
             {track.slice(1).map((p, i) => (
                 <Polyline key={i} positions={[[track[i].lat, track[i].lon], [p.lat, p.lon]]}
