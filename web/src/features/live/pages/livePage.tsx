@@ -1,4 +1,4 @@
-import * as React from "react";
+import {LuCheck, LuMic, LuRoute} from "react-icons/lu";
 import {NavBar} from "../../../shared/components/navBar.tsx";
 import {type FeedStatus, useLiveFeed} from "../hooks/useLiveFeed.ts";
 import {RoughnessGauge} from "../components/roughnessGauge.tsx";
@@ -6,160 +6,151 @@ import {WaveChart} from "../components/waveChart.tsx";
 import {RoadStrip} from "../components/roadStrip.tsx";
 import {EventList} from "../components/eventList.tsx";
 import {LiveTrackMap} from "../components/liveTrackMap.tsx";
-import {type DeviceDiag, LEVELS} from "../constants.ts";
+import {LiveEmptyState} from "../components/emptyState.tsx";
+import type {DeviceDiag} from "../constants.ts";
 import {SosBanner, SosMissingNotice} from "../components/sosBanner.tsx";
+import {Card} from "../../../shared/ui/card.tsx";
+import {CheckRow} from "../../../shared/ui/checkbox.tsx";
+import {LevelIcon} from "../../../shared/ui/levelIcon.tsx";
+import {LEVEL_META, LEVEL_ORDER} from "../../../shared/ui/levels.ts";
 
-const STATUS: Record<FeedStatus, { text: string, dot: string }> = {
-    connecting: {text: 'Підключення до сервера…', dot: 'bg-zinc-400'},
-    waiting: {text: 'Чекаю на пристрій…', dot: 'bg-yellow-400'},
-    offline: {text: 'Пристрій вимкнений або без інтернету', dot: 'bg-zinc-400'},
-    lowBattery: {text: 'Пристрій заснув: розряджений акумулятор', dot: 'bg-red-500'},
-    noSensor: {text: 'Пристрій онлайн, але акселерометр не відповідає: перевір дроти GY-521', dot: 'bg-red-500'},
-    live: {text: 'Пристрій онлайн', dot: 'bg-green-500 animate-pulse'},
-    demo: {text: 'Демо-дані', dot: 'bg-[#2a78d6]'},
+const STATUS: Record<FeedStatus, { text: string, tone: 'ok' | 'wait' | 'bad' | 'demo' }> = {
+    connecting: {text: 'Підключення до сервера…', tone: 'wait'},
+    waiting: {text: 'Очікуємо пристрій…', tone: 'wait'},
+    offline: {text: 'Пристрій вимкнений або без інтернету', tone: 'wait'},
+    lowBattery: {text: 'Пристрій заснув: розряджений акумулятор', tone: 'bad'},
+    noSensor: {text: 'Пристрій онлайн, але датчик тряски не відповідає', tone: 'bad'},
+    live: {text: 'Пристрій підключено', tone: 'ok'},
+    demo: {text: 'Демо-дані', tone: 'demo'},
+}
+const TONE = {
+    ok: 'bg-lvl-smooth-soft text-[#1554b3]',
+    wait: 'bg-white border border-line text-muted',
+    bad: 'bg-sos-soft text-sos',
+    demo: 'bg-brand-soft text-brand',
 }
 
-const Card = ({title, right, children, className = ''}: {
-    title: string, right?: React.ReactNode, children: React.ReactNode, className?: string
-}) => (
-    <section className={`rounded-xl border border-zinc-200 bg-white p-4 ${className}`}>
-        <div className='mb-3 flex flex-wrap items-center justify-between gap-2'>
-            <h2 className='text-sm font-medium uppercase tracking-wide text-zinc-500'>{title}</h2>
-            {right}
+const Stat = ({label, value, unit}: { label: string, value: string, unit?: string }) => (
+    <div className='rounded-xl border border-line px-3.5 py-3'>
+        <div className='text-[11px] font-semibold uppercase tracking-[0.06em] text-muted'>{label}</div>
+        <div className='mt-1 text-[22px] font-bold leading-tight tabular-nums'>
+            {value}{unit && value !== '—' && <span className='ml-1 text-sm font-medium text-muted'>{unit}</span>}
         </div>
-        {children}
-    </section>
-)
-
-const Stat = ({label, value}: { label: string, value: string }) => (
-    <div className='rounded-lg border border-zinc-200 px-3 py-2'>
-        <div className='text-xs uppercase tracking-wide text-zinc-500'>{label}</div>
-        <div className='text-xl font-medium tabular-nums'>{value}</div>
     </div>
 )
 
 const Legend = () => (
-    <div className='flex flex-wrap gap-3 text-xs text-zinc-500'>
-        {Object.values(LEVELS).map((l) => (
-            <span key={l.label} className='flex items-center gap-1'>
-                <i className='inline-block h-2.5 w-2.5 rounded-sm' style={{background: l.color}}/>{l.label}
-            </span>
+    <div className='flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-ink'>
+        {LEVEL_ORDER.map((l) => (
+            <span key={l} className='flex items-center gap-1.5'><LevelIcon level={l} size={11}/>{LEVEL_META[l].label}</span>
         ))}
     </div>
 )
 
 const Axis = ({labels}: { labels: string[] }) => (
-    <div className='mt-1 flex justify-between text-xs text-zinc-400'>
+    <div className='mt-2 flex justify-between pl-11 text-xs text-muted'>
         {labels.map((l) => <span key={l}>{l}</span>)}
     </div>
 )
 
-// Що підключено до пристрою (пристрій публікує після кожного підключення)
+// Що підключено до пристрою
 const DiagRow = ({diag}: { diag: DeviceDiag }) => {
-    const items: [string, 0 | 1][] = [['Акселерометр', diag.mpu], ['Мікрофон', diag.mic], ['SD-картка', diag.sd],
-        ['Екран', diag.oled], ['Номер SOS', diag.sos]]
-    // SIM800L: знайдено → SIM → мережа → сигнал
-    const gsm = !diag.gsm ? {text: 'SIM800L', cls: 'bg-zinc-100 text-zinc-500 line-through'}
-        : diag.sim === 0 ? {text: 'SIM800L: немає SIM або PIN', cls: 'bg-amber-50 text-amber-700'}
-            : diag.reg === 0 ? {text: 'SIM800L: шукає мережу', cls: 'bg-amber-50 text-amber-700'}
-                : {text: `SIM800L${diag.csq != null && diag.csq !== 99 ? ` · сигнал ${diag.csq}/31` : ''}`, cls: 'bg-green-50 text-green-700'}
+    const items: [string, 0 | 1][] = [['Датчик тряски', diag.mpu], ['Мікрофон', diag.mic], ['SD-картка', diag.sd], ['Екран', diag.oled], ['Номер SOS', diag.sos]]
     return (
-        <div className='mb-4 flex flex-wrap items-center gap-2 text-xs text-zinc-600'>
-            <span>Пристрій v{diag.fw}{diag.ssid ? ` · ${diag.ssid}` : ''}:</span>
+        <div className='mb-5 flex flex-wrap items-center gap-2 text-xs'>
+            <span className='text-muted'>Пристрій v{diag.fw}{diag.ssid ? ` · ${diag.ssid}` : ''}</span>
             {items.map(([label, ok]) => (
-                <span key={label} className={`rounded-full px-2 py-0.5 ${ok ? 'bg-green-50 text-green-700' : 'bg-zinc-100 text-zinc-500 line-through'}`}>
-                    {label}
+                <span key={label} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium ${ok ? 'bg-brand-soft text-brand' : 'bg-white text-faint line-through ring-1 ring-line'}`}>
+                    {ok ? <LuCheck size={12} strokeWidth={3}/> : null}{label}
                 </span>
             ))}
-            <span className={`rounded-full px-2 py-0.5 ${gsm.cls}`}>{gsm.text}</span>
-            {diag.stuck && (
-                <span className='rounded-full bg-amber-50 px-2 py-0.5 text-amber-700'>
-                    Замкнена кнопка {diag.stuck}: перевір ніжки (бери по діагоналі)
-                </span>
-            )}
-            {diag.i2c != null && (!diag.oled || !diag.mpu) && (
-                <span className='text-zinc-500'>
-                    На шині I2C: {diag.i2c || 'нікого'}
-                    {!diag.oled && ' · екран (3C) не відповідає: перевір його VCC, GND, SDA, SCL'}
-                </span>
-            )}
+            {diag.stuck && <span className='rounded-full bg-lvl-uneven-soft px-2.5 py-1 font-medium text-[#8a5a00]'>Замкнена кнопка {diag.stuck}: перевір ніжки</span>}
+            {diag.i2c != null && (!diag.oled || !diag.mpu) && <span className='text-muted'>На шині I2C: {diag.i2c || 'нікого'}</span>}
         </div>
     )
 }
 
+const batteryPct = (v?: number) => v != null && v > 3 && v < 4.4 ? Math.round(Math.max(0, Math.min(1, (v - 3.3) / 0.9)) * 100) : null
+
 export const LivePage = () => {
     const {store, status, demo, setDemo, diag} = useLiveFeed()
     const s = STATUS[status]
+    const hasData = status === 'live' || status === 'noSensor' || status === 'demo'
+    const pct = batteryPct(store.bat)
+    const pill = status === 'live'
+        ? [s.text, store.lat != null ? 'GPS' : 'без GPS', pct != null ? `батарея ${pct} %` : null].filter(Boolean).join(' · ')
+        : s.text
 
     return (
-        <div className='min-h-screen bg-zinc-50'>
+        <div className='min-h-full bg-page pb-24 md:pb-10'>
             <NavBar/>
-            <main className='mx-auto max-w-6xl px-4 pb-10'>
-                <div className='mb-4 flex flex-wrap items-center gap-3'>
-                    <h1 className='text-2xl font-semibold'>Дорога наживо</h1>
-                    <span className='flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-sm'>
-                        <i className={`inline-block h-2.5 w-2.5 rounded-full ${s.dot}`}/>{s.text}
+            <main className='mx-auto max-w-[1280px] px-4 pt-6 md:px-8'>
+                <div className='mb-5 flex flex-wrap items-center gap-3'>
+                    <h1 className='text-[28px] font-bold tracking-tight'>Дорога наживо</h1>
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold ${TONE[s.tone]}`}>
+                        {s.tone === 'ok' ? <LuCheck size={15} strokeWidth={3}/> : <i className={`inline-block h-2 w-2 rounded-full ${s.tone === 'bad' ? 'bg-sos' : s.tone === 'demo' ? 'bg-brand' : 'bg-faint'}`}/>}
+                        {pill}
                     </span>
                     {store.recording && (
-                        <span className='flex items-center gap-2 rounded-full bg-red-600 px-3 py-1 text-sm text-white'>
-                            <i className='inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-white'/>Йде запис голосу
+                        <span className='inline-flex items-center gap-2 rounded-full bg-sos px-3 py-1.5 text-sm font-semibold text-white'>
+                            <LuMic size={15}/> Йде запис голосу
                         </span>
                     )}
                     {store.trackOn && (
-                        <span className='flex items-center gap-2 rounded-full border border-blue-300 bg-blue-50 px-3 py-1 text-sm text-blue-800'>
-                            <i className='inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-blue-500'/>Пишеться GPS-маршрут
+                        <span className='inline-flex items-center gap-2 rounded-full bg-brand px-3 py-1.5 text-sm font-semibold text-white'>
+                            <LuRoute size={15}/> Пишеться GPS-маршрут
                         </span>
                     )}
                     {store.points > 0 && (
-                        <span className='rounded-full border border-violet-300 bg-violet-50 px-3 py-1 text-sm text-violet-800'>
+                        <span className='rounded-full bg-white px-3 py-1.5 text-sm font-medium ring-1 ring-line'>
                             Точок: {store.points}{store.linkPoint ? ` · голос піде в точку ${store.linkPoint}` : ''}
                         </span>
                     )}
-                    <button onClick={() => setDemo((d) => !d)}
-                            className={`ml-auto rounded-lg px-4 py-1.5 text-sm ${demo ? 'bg-[#2a78d6] text-white' : 'border border-zinc-200 bg-white'}`}>
-                        {demo ? 'Вимкнути демо' : 'Демо-режим'}
-                    </button>
+                    <CheckRow className='ml-auto font-medium' checked={demo} onChange={setDemo}>Демо-режим</CheckRow>
                 </div>
 
                 {store.sos && <SosBanner sos={store.sos} onDismiss={() => { store.sos = null }}/>}
                 <SosMissingNotice/>
                 {diag && <DiagRow diag={diag}/>}
 
-                <div className='grid gap-4 lg:grid-cols-[300px_1fr]'>
-                    <div className='contents lg:flex lg:flex-col lg:gap-4'>
-                        <Card title='Індекс нерівності'>
-                            <RoughnessGauge rms={store.rms}/>
-                            <div className='mt-4 grid grid-cols-2 gap-2'>
-                                <Stat label='Ями' value={String(store.bumps)}/>
-                                <Stat label='Пік, g' value={store.peak.toFixed(2)}/>
-                                <Stat label='Швидкість' value={store.speed != null ? `${store.speed.toFixed(1)} км/г` : '—'}/>
-                                <Stat label='Супутники' value={store.sat != null ? String(store.sat) : '—'}/>
-                            </div>
-                            {store.bat != null && store.bat > 2.5 && (
-                                <p className='mt-3 text-xs text-zinc-500'>Акумулятор: {store.bat.toFixed(2)} В</p>
-                            )}
-                        </Card>
-                        <Card title='Події' className='max-lg:order-last'>
-                            <EventList events={store.events}/>
-                        </Card>
-                    </div>
+                {!hasData ? (
+                    <LiveEmptyState statusText={s.text} onDemo={() => setDemo(true)}/>
+                ) : (
+                    <div className='grid gap-5 lg:grid-cols-[320px_1fr]'>
+                        <div className='contents lg:flex lg:flex-col lg:gap-5'>
+                            <Card title='Індекс нерівності'>
+                                {status === 'noSensor'
+                                    ? <p className='py-8 text-center text-sm text-muted'>Датчик тряски не відповідає: перевір дроти GY-521 (SDA → D21, SCL → D22). GPS і точки працюють.</p>
+                                    : <RoughnessGauge rms={store.rms}/>}
+                                <div className='mt-5 grid grid-cols-2 gap-2.5'>
+                                    <Stat label='Ями' value={String(store.bumps)}/>
+                                    <Stat label='Пік' value={store.peak.toFixed(2).replace('.', ',')} unit='G'/>
+                                    <Stat label='Швидкість' value={store.speed != null ? String(Math.round(store.speed)) : '—'} unit='км/год'/>
+                                    <Stat label='Супутники' value={store.sat != null ? String(store.sat) : '—'}/>
+                                </div>
+                            </Card>
+                            <Card title='Події' className='max-lg:order-last'>
+                                <EventList events={store.events}/>
+                            </Card>
+                        </div>
 
-                    <div className='flex min-w-0 flex-col gap-4'>
-                        <Card title='Вертикальний струс, g' right={<Legend/>}>
-                            <WaveChart store={store}/>
-                            <Axis labels={['−10 с', '−5 с', 'зараз']}/>
-                        </Card>
-                        <Card title='Стрічка дороги · 2 хвилини'>
-                            <RoadStrip store={store}/>
-                            <Axis labels={['−2 хв', '−1 хв', 'зараз']}/>
-                        </Card>
-                        <Card title='Маршрут' className='flex flex-col'>
-                            <div className='h-80'>
-                                <LiveTrackMap track={store.track} events={store.events} lat={store.lat} lon={store.lon}/>
-                            </div>
-                        </Card>
+                        <div className='flex min-w-0 flex-col gap-5'>
+                            <Card title='Вертикальний струс, G' right={<Legend/>}>
+                                <WaveChart store={store}/>
+                                <Axis labels={['−10 с', '−5 с', 'зараз']}/>
+                            </Card>
+                            <Card title='Стрічка дороги · 2 хвилини'>
+                                <RoadStrip store={store}/>
+                                <div className='mt-2 flex justify-between text-xs text-muted'><span>−2 хв</span><span>−1 хв</span><span>зараз</span></div>
+                            </Card>
+                            <Card title='Маршрут' right={<span className='text-[13px] text-muted'>Позиція оновлюється щосекунди</span>}>
+                                <div className='h-72'>
+                                    <LiveTrackMap track={store.track} events={store.events} lat={store.lat} lon={store.lon}/>
+                                </div>
+                            </Card>
+                        </div>
                     </div>
-                </div>
+                )}
             </main>
         </div>
     )

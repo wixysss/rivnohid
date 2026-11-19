@@ -1,3 +1,5 @@
+import {LEVEL_META, type RoadLevel} from "../../shared/ui/levels.ts";
+
 // Мають збігатися з прошивкою ESP32 (rivnohid_live.ino)
 export const MQTT_URL = 'wss://broker.hivemq.com:8884/mqtt'
 export const MQTT_TOPIC = 'rivnohid/rv7f3k/live'
@@ -19,15 +21,10 @@ export const STRIP_SECONDS = 120
 export const TRACK_POINTS = 600
 export const OFFLINE_AFTER_MS = 2500
 
-// Межі для RMS вертикального струсу (g)
-export type Level = 'smooth' | 'uneven' | 'rough' | 'bad'
+// Межі для RMS вертикального струсу (g). Кольори й форми — спільні для всього сайту.
+export type Level = RoadLevel
 
-export const LEVELS: Record<Level, { label: string, color: string }> = {
-    smooth: {label: 'Рівно', color: '#22c55e'},
-    uneven: {label: 'Нерівно', color: '#eab308'},
-    rough: {label: 'Погано', color: '#f97316'},
-    bad: {label: 'Дуже погано', color: '#ef4444'},
-}
+export const LEVELS: Record<Level, { label: string, color: string }> = LEVEL_META
 
 export const levelOfRms = (rms: number): Level =>
     rms < 0.06 ? 'smooth' : rms < 0.14 ? 'uneven' : rms < 0.25 ? 'rough' : 'bad'

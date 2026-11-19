@@ -22,7 +22,7 @@ export const VoicePlayer = ({id}: { id: string }) => {
         }
     }, [id])
 
-    if (error) return <p className='text-xs text-red-500'>{error}</p>
-    if (!url) return <p className='text-xs text-zinc-500'>Завантажую запис…</p>
-    return <audio controls autoPlay={false} src={url} className='w-56 max-w-full'/>
+    if (error) return <p className='text-xs text-sos'>{error}</p>
+    if (!url) return <p className='text-xs text-muted'>Завантажую запис…</p>
+    return <audio controls autoPlay={false} src={url} className='h-10 w-full min-w-56'/>
 }

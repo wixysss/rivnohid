@@ -9,16 +9,18 @@ import {MapEditor} from "../features/map/pages/mapEditor.tsx";
 import {LivePage} from "../features/live/pages/livePage.tsx";
 import {SosSettingsPage} from "../features/sos/pages/sosSettingsPage.tsx";
 import {RoutePage} from "../features/routing/pages/RoutePage.tsx";
+import {ProfilePage} from "../features/profile/profilePage.tsx";
 
 export const Router = () => {
     return (
         <BrowserRouter>
             <Routes>
 
-                <Route path='/' element={<Navigate to='/login'/>}/>
+                <Route path='/' element={<Navigate to='/map'/>}/>
                 <Route path='/map' element={<MapPage/>}/>
                 <Route path='/live' element={<LivePage/>}/>
                 <Route path='/route' element={<RoutePage/>}/>
+                <Route path='/profile' element={<ProfilePage/>}/>
                 <Route element={<PublicOnlyRoute/>}>
                     <Route path='/login' element={<LoginPage/>}/>
                     <Route path='/register' element={<RegisterPage/>}/>

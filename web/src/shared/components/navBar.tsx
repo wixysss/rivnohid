@@ -1,117 +1,116 @@
+import {Link, NavLink, useNavigate} from "react-router-dom";
+import {useEffect, useRef, useState} from "react";
+import {LuActivity, LuLogOut, LuMap, LuMapPin, LuNavigation, LuSiren, LuUser} from "react-icons/lu";
 import {signOut} from "../../features/auth/requests.ts";
-import {Link} from "react-router-dom";
-import {useState} from "react";
-import {MdLogout} from "react-icons/md";
-import {FiUser} from "react-icons/fi";
 import {useAuthStore} from "../../features/auth/store/useAuthStore.ts";
-import logo from '../../../public/logo.png'
-import {NAV_LINKS, NAV_STYLES} from "../constants.ts";
+import {NAV_LINKS} from "../constants.ts";
 
-const {
-    overlay,
-    desktopLinks,
-    item,
-    itemClosed,
-    itemOpen,
-    danger,
-    overlayClosed,
-    overlayOpen,
-    burger,
-    line,
-    lineTopOpen,
-    lineBotOpen,
-    lineMidOpen
-} = NAV_STYLES
+export const Logo = ({compact = false}: { compact?: boolean }) => (
+    <Link to='/map' className='flex items-center gap-2.5'>
+        <span className='grid h-9 w-9 place-items-center rounded-xl bg-brand text-white'>
+            <LuMapPin size={19} strokeWidth={2.4}/>
+        </span>
+        {!compact && <span className='text-[21px] font-bold tracking-tight text-ink'>Rivnohid</span>}
+    </Link>
+)
 
-export const NavBar = () => {
-    const [isOpen, setIsOpen] = useState(false)
-    const [error, setError] = useState('')
-    const [isMenuOpen, setIsMenuOpen] = useState(false)
+const ProfileMenu = () => {
+    const session = useAuthStore((s) => s.session)
+    const [open, setOpen] = useState(false)
+    const ref = useRef<HTMLDivElement>(null)
+    const navigate = useNavigate()
 
-    const session = useAuthStore((state) => state.session)
+    useEffect(() => {
+        if (!open) return
+        const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
+        document.addEventListener('mousedown', close)
+        return () => document.removeEventListener('mousedown', close)
+    }, [open])
 
-    const handleLogout = async () => {
-        try {
-            await signOut()
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Unknown error')
-        }
-    }
-
+    const name = session?.user.user_metadata?.display_name as string | undefined
     return (
-        <header className='relative z-1200 flex w-full items-center justify-between p-2'>
-            <Link className='relative z-20 flex items-center gap-1' to='/map'><img alt='rivnohid'
-                                                                                   className='w-15 h-auto' src={logo}/>
-                <h1 className='text-[30px]'>Rivnohid</h1></Link>
-            <nav className={desktopLinks}>
-
-                {NAV_LINKS.map((link) => (
-                    <Link key={link.to} to={link.to} className={link?.danger ? 'text-red-500' : ''}>
-                        {link.label}
-                    </Link>
-                ))}
-                <div className='cursor-pointer' onClick={() => setIsOpen((prev) => !prev)}><FiUser size={40}/></div>
-
-                <div className={`user-modal modal-border ${isOpen ? 'open' : ''}`}>
-
+        <div ref={ref} className='relative'>
+            <button aria-label='Профіль' onClick={() => setOpen((v) => !v)}
+                    className='grid h-10 w-10 place-items-center rounded-full border border-line bg-white text-ink hover:bg-page'>
+                <LuUser size={19}/>
+            </button>
+            {open && (
+                <div className='absolute right-0 top-12 z-[1300] w-60 rounded-2xl border border-line bg-white p-2 shadow-xl'>
                     {session ? (
                         <>
-                            <button
-                                className="bg-red-500 cursor-pointer w-full rounded-lg flex justify-center items-center gap-1 h-10 text-white"
-                                onClick={handleLogout}>Logout <MdLogout size={20}/></button>
-                            <p className='text-red-500'>{error}</p>
+                            <div className='px-3 py-2'>
+                                <p className='truncate font-semibold'>{name || 'Мій профіль'}</p>
+                                <p className='truncate text-xs text-muted'>{session.user.email}</p>
+                            </div>
+                            <Link to='/settings/sos' onClick={() => setOpen(false)}
+                                  className='block rounded-xl px-3 py-2 text-sm hover:bg-page'>Екстрений контакт (SOS)</Link>
+                            <Link to='/map/editor' onClick={() => setOpen(false)}
+                                  className='block rounded-xl px-3 py-2 text-sm hover:bg-page'>Додати позначку</Link>
+                            <button onClick={async () => { await signOut(); setOpen(false); navigate('/map') }}
+                                    className='flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-sos hover:bg-sos-soft'>
+                                <LuLogOut size={16}/> Вийти
+                            </button>
                         </>
                     ) : (
-                        <Link to='/register'>
-                            <button
-                                className="bg-[#2a78d6] cursor-pointer w-full rounded-lg flex justify-center items-center gap-1 h-10 text-white"
-                            >Sign in
-                            </button>
-                        </Link>
+                        <div className='flex flex-col gap-1.5 p-1'>
+                            <p className='px-2 pb-1 text-sm text-muted'>Увійдіть, щоб додавати позначки й писати нотатки.</p>
+                            <Link to='/login' onClick={() => setOpen(false)}
+                                  className='rounded-xl bg-brand px-3 py-2 text-center text-sm font-semibold text-white'>Увійти</Link>
+                            <Link to='/register' onClick={() => setOpen(false)}
+                                  className='rounded-xl border border-line px-3 py-2 text-center text-sm font-semibold'>Зареєструватися</Link>
+                        </div>
                     )}
                 </div>
-            </nav>
-
-
-            <button
-                className={burger}
-                aria-label={isMenuOpen ? 'Закрити меню' : 'Відкрити меню'}
-                aria-expanded={isMenuOpen}
-                onClick={() => setIsMenuOpen((prev) => !prev)}
-            >
-                <span className={`${line} ${isMenuOpen ? lineTopOpen : ''}`}/>
-                <span className={`${line} ${isMenuOpen ? lineMidOpen : ''}`}/>
-                <span className={`${line} ${isMenuOpen ? lineBotOpen : ''}`}/>
-            </button>
-
-            <div className={`${overlay} ${isMenuOpen ? overlayOpen : overlayClosed}`}>
-                {NAV_LINKS.map((link, index) => (
-                    <Link
-                        key={link.to}
-                        to={link.to}
-                        onClick={() => setIsMenuOpen(false)}
-                        className={`${item} ${isMenuOpen ? itemOpen : itemClosed} ${link?.danger ? danger : ''}`}
-                        style={{transitionDelay: isMenuOpen ? `${index * 60}ms` : '0ms'}}
-                    >
-                        {link.label}
-                    </Link>
-                ))}
-                {session ? (
-                    <>
-                        <button
-                            className="bg-red-500 cursor-pointer w-25 rounded-lg flex justify-center items-center gap-1 h-10 text-white"
-                            onClick={handleLogout}>Logout <MdLogout size={20}/></button>
-                        <p className='text-red-500'>{error}</p>
-                    </>
-                ) : (
-                    <Link to='/register'>
-                        <button
-                            className="bg-[#2a78d6] cursor-pointer rounded-lg w-25 flex justify-center items-center gap-1 h-10 text-white"
-                        >Sign in
-                        </button>
-                    </Link>
-                )}
-            </div>
-        </header>
+            )}
+        </div>
     )
 }
+
+export const SosButton = ({className = ''}: { className?: string }) => (
+    <Link to='/settings/sos'
+          className={`inline-flex items-center gap-1.5 rounded-full border-[1.5px] border-sos px-4 py-2 text-sm font-bold text-sos hover:bg-sos-soft ${className}`}>
+        <LuSiren size={16}/> SOS
+    </Link>
+)
+
+// Нижні вкладки на телефоні
+const TABS = [
+    {to: '/map', label: 'Карта', icon: LuMap},
+    {to: '/route', label: 'Навігатор', icon: LuNavigation},
+    {to: '/live', label: 'Наживо', icon: LuActivity},
+    {to: '/profile', label: 'Профіль', icon: LuUser},
+]
+
+export const MobileTabBar = () => (
+    <nav className='fixed inset-x-0 bottom-0 z-[1200] flex border-t border-line bg-white pb-[env(safe-area-inset-bottom)] md:hidden'>
+        {TABS.map(({to, label, icon: Icon}) => (
+            <NavLink key={to} to={to} end={to === '/map'}
+                     className={({isActive}) => `flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-medium ${isActive ? 'text-brand' : 'text-muted'}`}>
+                {({isActive}) => (<><Icon size={21} strokeWidth={isActive ? 2.4 : 1.8}/>{label}</>)}
+            </NavLink>
+        ))}
+    </nav>
+)
+
+// Шапка сайту. На телефоні замість неї нижні вкладки; mobileBar=false ховає й верхню смужку
+// (сторінки з картою на весь екран мають власні плаваючі елементи).
+export const NavBar = ({mobileBar = true}: { mobileBar?: boolean }) => (
+    <>
+        <header className={`relative z-[1200] h-16 shrink-0 items-center justify-between border-b border-line bg-white px-4 md:flex md:px-7 ${mobileBar ? 'flex' : 'hidden'}`}>
+            <Logo/>
+            <nav className='hidden items-center gap-1 md:flex'>
+                {NAV_LINKS.map((l) => (
+                    <NavLink key={l.to} to={l.to} end
+                             className={({isActive}) => `rounded-full px-4 py-2 text-[15px] font-medium transition-colors ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-ink hover:bg-page'}`}>
+                        {l.label}
+                    </NavLink>
+                ))}
+            </nav>
+            <div className='flex items-center gap-2.5'>
+                <SosButton/>
+                <ProfileMenu/>
+            </div>
+        </header>
+        <MobileTabBar/>
+    </>
+)
