@@ -9,7 +9,7 @@
     Мікрофон INMP441  SCK=26 WS=25 SD=39 (L/R на GND)
     GPS  TX модуля -> 35
     SIM800L (необов'язково) TXD->16, RXD<-17
-    Кнопки (другий вивід на GND): 1=32 запис голосу, 2=33 стоп мікрофона,
+    Кнопки (другий вивід на GND): 1=32 голос вкл/викл, 2=33 запис GPS-маршруту вкл/викл,
                                   3=14 поставити точку на карті, 4=15 SOS (утримати 2 с)
     RGB світлодіод R=13 G=4 B=2, дільник акумулятора -> 34
 
@@ -52,7 +52,7 @@ const char* MQTT_TOPIC  = "rivnohid/rv7f3k/live";
 const char* MQTT_STATUS = "rivnohid/rv7f3k/status";
 const char* MQTT_EVENT  = "rivnohid/rv7f3k/event";
 const char* MQTT_DIAG   = "rivnohid/rv7f3k/diag";     // що підключено (retained)
-#define FW_VERSION "3.6"
+#define FW_VERSION "3.7"
 
 // ---------------- Піни ----------------
 #define PIN_SDA      21
@@ -851,7 +851,7 @@ void wavHeader(File& f, uint32_t dataBytes) {
 }
 
 void recStartNote() {
-  if (recording) { toast("Вже записую", "Стоп: кнопка 2"); return; }
+  if (recording) { toast("Вже записую", "Стоп: кнопка 1"); return; }
   if (!micOk) { toast("Мікрофон", "не відповідає"); return; }
   if (!sdOk) {
     // Без SD: короткий запис у RAM
@@ -1162,9 +1162,27 @@ void pointAdd() {
 // =====================================================================
 //                     GPS-трек зі станом дороги
 // =====================================================================
+// Кнопка 2: запис GPS-маршруту вкл/викл. Поки увімкнено, раз на 3 с (якщо зрушили на 3 м)
+// пишеться точка зі станом дороги; на сайті з них малюється карта доріг у навігаторі.
+bool     trackOn = false;
+uint32_t trackPtsThisRun = 0;
+void trackToggle() {
+  trackOn = !trackOn;
+  if (trackOn) {
+    trackLastLat = trackLastLon = NAN; trackPtsThisRun = 0;
+    toast("Запис GPS: ВКЛ", gpsFix() ? "точка раз на 3 с" : "чекаю GPS...", 3000);
+  } else {
+    toast("Запис GPS: ВИКЛ", "точок: " + String(trackPtsThisRun), 3000);
+  }
+  char ev[64]; snprintf(ev, sizeof(ev), "{\"type\":\"track\",\"on\":%s,\"n\":%lu}", trackOn ? "true" : "false", (unsigned long)trackPtsThisRun);
+  mqttEvent(ev);
+  Serial.printf("Запис GPS-маршруту: %s\n", trackOn ? "увімкнено" : "вимкнено");
+}
+
 void trackTick() {
   static uint32_t last = 0;
   if (gpsFix()) { fixLat = gps.location.lat(); fixLon = gps.location.lng(); fixMs = millis(); }
+  if (!trackOn) return;
   if (millis() - last < TRACK_EVERY_MS) return;
   last = millis();
   if (!gpsFix()) return;
@@ -1178,6 +1196,7 @@ void trackTick() {
   }
   TrackPt& t = track[(trackHead + trackCount) % TRACK_CAP];
   t.lat = lat; t.lon = lon; t.ms = millis();
+  trackPtsThisRun++;
   t.rmsMg = sensorOk ? (int16_t)min(30000L, lroundf(ringRms(30) * 1000)) : -1;   // за останні 3 с
   trackCount++;
 }
@@ -1185,7 +1204,7 @@ void trackTick() {
 void trackSend() {
   static uint32_t last = 0;
   if (trackInFlight || !trackCount || WiFi.status() != WL_CONNECTED) return;
-  if (trackCount < TRACK_BATCH && millis() - last < TRACK_SEND_MS) return;
+  if (trackCount < TRACK_BATCH && trackOn && millis() - last < TRACK_SEND_MS) return;
   last = millis();
   uint16_t n = min((uint16_t)TRACK_BATCH, trackCount);
   String js; js.reserve(n * 42 + 4);
@@ -1221,8 +1240,8 @@ void sendBatch() {
   static char buf[900];
   int p = snprintf(buf, sizeof(buf), "{\"seq\":%lu,\"t\":%lu,\"hz\":%d,\"a\":[", (unsigned long)seq++, (unsigned long)millis(), SAMPLE_HZ);
   for (int i = 0; i < BATCH; i++) p += snprintf(buf + p, sizeof(buf) - p, i ? ",%d" : "%d", batchBuf[i]);
-  p += snprintf(buf + p, sizeof(buf) - p, "],\"rms\":%.3f,\"pk\":%.3f,\"bump\":%d,\"mark\":0,\"bat\":%.2f,\"rec\":%d,\"pt\":%u",
-                rms, peak, bump ? 1 : 0, batteryV(), recording ? 1 : 0, pointActive() ? pointSeq : 0);
+  p += snprintf(buf + p, sizeof(buf) - p, "],\"rms\":%.3f,\"pk\":%.3f,\"bump\":%d,\"mark\":0,\"bat\":%.2f,\"rec\":%d,\"pt\":%u,\"trk\":%d",
+                rms, peak, bump ? 1 : 0, batteryV(), recording ? 1 : 0, pointActive() ? pointSeq : 0, trackOn ? 1 : 0);
   if (gpsFix())
     p += snprintf(buf + p, sizeof(buf) - p, ",\"lat\":%.6f,\"lon\":%.6f,\"spd\":%.1f,\"sat\":%d",
                   gps.location.lat(), gps.location.lng(), gps.speed.kmph(), (int)gps.satellites.value());
@@ -1247,8 +1266,8 @@ void gpsOnlyPacket() {
   if (millis() - last < 1000 || !mqtt.connected()) return;
   last = millis();
   char buf[260];
-  int p = snprintf(buf, sizeof(buf), "{\"seq\":%lu,\"t\":%lu,\"hz\":%d,\"a\":[],\"rms\":0,\"pk\":0,\"bump\":0,\"mark\":0,\"nosensor\":1,\"bat\":%.2f,\"rec\":%d,\"pt\":%u",
-                   (unsigned long)seq++, (unsigned long)millis(), SAMPLE_HZ, batteryV(), recording ? 1 : 0, pointActive() ? pointSeq : 0);
+  int p = snprintf(buf, sizeof(buf), "{\"seq\":%lu,\"t\":%lu,\"hz\":%d,\"a\":[],\"rms\":0,\"pk\":0,\"bump\":0,\"mark\":0,\"nosensor\":1,\"bat\":%.2f,\"rec\":%d,\"pt\":%u,\"trk\":%d",
+                   (unsigned long)seq++, (unsigned long)millis(), SAMPLE_HZ, batteryV(), recording ? 1 : 0, pointActive() ? pointSeq : 0, trackOn ? 1 : 0);
   if (gpsFix())
     p += snprintf(buf + p, sizeof(buf) - p, ",\"lat\":%.6f,\"lon\":%.6f,\"spd\":%.1f,\"sat\":%d",
                   gps.location.lat(), gps.location.lng(), gps.speed.kmph(), (int)gps.satellites.value());
@@ -1286,7 +1305,7 @@ void drawScreen() {
     uint32_t s = (millis() - recStart) / 1000;
     char t[24]; snprintf(t, sizeof(t), "%lu:%02lu", (unsigned long)(s / 60), (unsigned long)(s % 60));
     l1 = String((millis() / 500) % 2 ? "* " : "  ") + (recPointSeq ? "Точка " + String(recPointSeq) + " " : String("Запис ")) + t;
-    l2 = recToRam ? "Стоп: 2 (макс " + String((ramCap - 44) / REC_RATE_OUT) + " с)" : String("Стоп: кнопка 2");
+    l2 = recToRam ? "Стоп: 1 (макс " + String((ramCap - 44) / REC_RATE_OUT) + " с)" : String("Стоп: кнопка 1");
   } else if (millis() < toastUntil) {
     l1 = toast1; l2 = toast2;
   } else {
@@ -1299,6 +1318,7 @@ void drawScreen() {
     l2 = sensorOk ? String(lvl) + " " + idx : String("Датчик мовчить");
     if (batLow && (millis() / 3000) % 2) l2 = "Зарядіть акум.";
     if (pointActive()) l2 = "Точка " + String(pointSeq) + " 1=голос";
+    else if (trackOn && (millis() / 3000) % 2) l2 = (gpsFix() ? "Маршрут: " : "Маршрут: GPS? ") + String(trackPtsThisRun);
     else if (pointSeq) l2 += " Т" + String(pointSeq);
   }
 
@@ -1345,8 +1365,8 @@ void handleButtons() {
 
     if (pressed && !b.down) {                                       // натиснули
       b.down = true; b.since = millis(); b.longFired = false;
-      if (i == 0) recStartNote();
-      if (i == 1) recStopNote();
+      if (i == 0) { if (recording) recStopNote(); else recStartNote(); }   // кнопка 1: голос вкл/викл
+      if (i == 1) trackToggle();                                         // кнопка 2: запис GPS-маршруту
       if (i == 2) pointAdd();
       if (i == 3) {
         if (sosCalling || millis() < sosShownUntil) { sosHangup(); b.longFired = true; }

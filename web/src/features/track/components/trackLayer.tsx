@@ -14,7 +14,7 @@ export const TrackLayer = () => {
         <>
             {runs.map((r, i) => (
                 <Polyline key={i} positions={r.path} renderer={renderer}
-                          pathOptions={{color: LEVEL_COLOR[r.level], weight: 6, opacity: 0.85, lineCap: 'round'}}>
+                          pathOptions={{color: LEVEL_COLOR[r.level], weight: 6, opacity: 0.9, lineCap: 'round', lineJoin: 'round'}}>
                     <Tooltip sticky>Обстежено пристроєм: {LEVEL_LABEL[r.level].toLowerCase()}</Tooltip>
                 </Polyline>
             ))}

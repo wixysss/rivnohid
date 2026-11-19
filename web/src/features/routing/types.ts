@@ -14,4 +14,4 @@ export type ScoringMarker = {
     severity: MarkerValues['severity']
 }
 
-export type ScoredRoute = Route & { fine: number }
+export type ScoredRoute = Route & { fine: number, problems: number }

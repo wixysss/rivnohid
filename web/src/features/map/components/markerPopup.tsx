@@ -1,35 +1,34 @@
-import type {getMarkers} from "../requests.ts";
-import {getSeverityStyle} from "../markerStyles.ts";
+import {LuTrash2} from "react-icons/lu";
 import {useAuthStore} from "../../auth/store/useAuthStore.ts";
 import {useDeleteMarker} from "../hooks/useDeleteMarker.ts";
+import {LevelBadge} from "../../../shared/ui/levelIcon.tsx";
+import {levelOfSeverity} from "../../../shared/ui/levels.ts";
+import type {MarkerRow} from "./mapView.tsx";
 
-type MarkerWithType = Awaited<ReturnType<typeof getMarkers>>[number]
-export const MarkerPopup = ({marker}: { marker: MarkerWithType }) => {
+export const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('uk-UA', {day: 'numeric', month: 'long'})
+
+// Картка позначки, яку додали люди на сайті
+export const MarkerPopup = ({marker}: { marker: MarkerRow }) => {
     const session = useAuthStore((s) => s.session)
     const isOwner = session && session.user.id === marker.user_id
     const {mutate, isPending} = useDeleteMarker()
 
-    const time = new Date(marker.created_at).toLocaleDateString('uk-UA')
-    const style = getSeverityStyle(marker.severity)
     return (
-        <div className='flex justify-around flex-col items-center pb-0'>
-            <h3>{marker.marker_types.label}</h3>
-            <p>{marker.description ?? 'Без опису'}</p>
-            <span
-                className={`${style.bg} text-white text-sm rounded-full px-2 py-0.5 inline-block `}>{style.label}</span>
-            <div className='flex justify-between gap-1 mt-1'>
-                <span className='text-xs'>{marker.profiles?.display_name ?? 'Без автора'}</span>
-                <span className='text-xs'>{time}</span>
-            </div>
+        <div className='flex flex-col gap-2'>
+            <div><LevelBadge level={levelOfSeverity(marker.severity)}/></div>
+            <h3 className='pr-6 text-[17px] font-bold leading-snug text-ink'>{marker.marker_types?.label ?? 'Позначка'}</h3>
+            {marker.description && <p className='text-sm text-ink'>{marker.description}</p>}
+            <p className='text-xs text-muted'>
+                Додано {fmtDate(marker.created_at)}
+                {marker.profiles?.display_name ? ` · ${marker.profiles.display_name}` : marker.source === 'device' ? ' · з пристрою' : ''}
+            </p>
+            <p className='text-xs text-faint'>{marker.lat.toFixed(5)}, {marker.lng.toFixed(5)}</p>
             {isOwner && (
-                <button
-                    disabled={isPending}
-                    className='w-full bg-red-500 rounded-lg mt-1 p-0.5 text-white'
-                    onClick={() => mutate(marker.id)}
-                >Delete
+                <button disabled={isPending} onClick={() => mutate(marker.id)}
+                        className='mt-1 inline-flex items-center justify-center gap-2 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-sos hover:bg-sos-soft disabled:opacity-50'>
+                    <LuTrash2 size={15}/> Видалити
                 </button>
             )}
-
         </div>
     )
 }

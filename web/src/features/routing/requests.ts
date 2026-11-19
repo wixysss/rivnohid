@@ -8,8 +8,10 @@ type OrsResponse = {
     }>
 }
 
-export const getRoutes = async (from: Point, to: Point): Promise<Route[]> => {
-    const response = await fetch('https://api.heigit.org/openrouteservice/v2/directions/wheelchair/geojson', {
+export type OrsProfile = 'wheelchair' | 'foot-walking' | 'cycling-regular'
+
+export const getRoutes = async (from: Point, to: Point, profile: OrsProfile = 'wheelchair'): Promise<Route[]> => {
+    const response = await fetch(`https://api.heigit.org/openrouteservice/v2/directions/${profile}/geojson`, {
         method: 'POST',
         headers: {Authorization: import.meta.env.VITE_ORS_API_KEY, 'Content-Type': 'application/json'},
         body: JSON.stringify({

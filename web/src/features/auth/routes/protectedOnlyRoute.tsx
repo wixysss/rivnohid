@@ -6,5 +6,5 @@ export const ProtectedOnlyRoute = () => {
     const user = useAuthStore((state) => state.session?.user)
     const isLoading = useAuthStore((state) => state.isLoading)
     if (isLoading) return <Loader/>;
-    return (user ? <Outlet/> : <Navigate to='/'/>)
+    return (user ? <Outlet/> : <Navigate to='/login'/>)
 }

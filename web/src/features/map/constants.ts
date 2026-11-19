@@ -1,7 +1,31 @@
 export const MAP_CENTER: [number, number] = [50.2547, 28.6587]
 export const MAP_ZOOM = 13
 
-export const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-export const TILE_ATTRIBUTION =
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+// Справжня карта світу. За замовчуванням світла CARTO Voyager (схожа на макет),
+// а в перемикачі шарів ще класична OpenStreetMap і супутник.
+export type BaseLayerId = 'light' | 'osm' | 'satellite'
+export const BASE_LAYERS: Record<BaseLayerId, { label: string, url: string, attribution: string, maxZoom: number, subdomains?: string }> = {
+    light: {
+        label: 'Світла',
+        url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        maxZoom: 20,
+        subdomains: 'abcd',
+    },
+    osm: {
+        label: 'Класична',
+        url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19,
+    },
+    satellite: {
+        label: 'Супутник',
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
+        maxZoom: 19,
+    },
+}
 
+// Для дрібних карт (сторінка «Наживо»)
+export const TILE_URL = BASE_LAYERS.light.url
+export const TILE_ATTRIBUTION = BASE_LAYERS.light.attribution

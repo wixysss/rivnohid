@@ -55,6 +55,7 @@ export class LiveStore {
     points = 0             // скільки точок поставлено кнопкою 3
     linkPoint = 0          // до якої точки зараз прив'яжеться голос
     noSensor = false       // пристрій на зв'язку, але акселерометр мовчить
+    trackOn = false        // кнопка 2: пишеться GPS-маршрут
     sos: SosAlert | null = null
 
     private secSq = 0
@@ -84,6 +85,7 @@ export class LiveStore {
         if (p.road != null) this.roadMode = p.road === 1
         if (p.pt != null) this.linkPoint = p.pt
         this.noSensor = p.nosensor === 1
+        if (p.trk != null) this.trackOn = p.trk === 1
         this.speed = p.spd
         this.sat = p.sat
         this.bat = p.bat
@@ -151,6 +153,9 @@ export class LiveStore {
             case 'sos':
                 this.sos = {time: new Date(), ...at(e.lat, e.lon), called: e.called}
                 this.events.unshift({id: ++this.eventId, time: new Date(), kind: 'sos', peak: 0, ...at(e.lat, e.lon)})
+                break
+            case 'track':
+                this.trackOn = e.on
                 break
             case 'sos_cancel':
                 this.sos = null
