@@ -16,6 +16,7 @@ import {LevelIcon} from "../../../shared/ui/levelIcon.tsx";
 import {Check, CheckRow} from "../../../shared/ui/checkbox.tsx";
 import {btn} from "../../../shared/ui/card.tsx";
 import type {Place} from "../../../shared/lib/geocode.ts";
+import {DemoNotice, DemoToggle} from "../../../shared/components/demoToggle.tsx";
 
 const PERIODS = [
     {days: 0, label: 'Увесь час'},
@@ -138,8 +139,11 @@ export const MapPage = () => {
                                     </button>
                                 )
                             })}
+                            <DemoToggle className='shadow-sm'/>
                         </div>
                     </div>
+                    <DemoNotice className='absolute bottom-[150px] left-1/2 z-[1000] max-w-[calc(100%-24px)] -translate-x-1/2 md:bottom-6'
+                                onFind={device.pos ? () => map?.flyTo([device.pos!.lat, device.pos!.lng], 17) : undefined}/>
                     <Link to='/settings/sos'
                           className='absolute bottom-[88px] left-3 z-[1000] inline-flex items-center gap-2 rounded-full bg-sos px-5 py-3 font-bold text-white shadow-lg md:hidden'>
                         <LuSiren size={19}/> SOS

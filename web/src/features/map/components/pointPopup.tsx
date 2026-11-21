@@ -10,6 +10,7 @@ import {LevelBadge} from "../../../shared/ui/levelIcon.tsx";
 import {levelOfSeverity} from "../../../shared/ui/levels.ts";
 import {fmtDate} from "./markerPopup.tsx";
 import type {MarkerRow} from "./mapView.tsx";
+import {isDemoId} from "../../demo/demoWorld.ts";
 
 // Точка з пристрою (кнопка 3): стан дороги, голос, текст, який можна дописати на сайті
 export const PointPopup = ({marker}: { marker: MarkerRow }) => {
@@ -75,7 +76,9 @@ export const PointPopup = ({marker}: { marker: MarkerRow }) => {
                     <p className={`whitespace-pre-wrap text-sm ${marker.description ? 'text-ink' : 'text-faint'}`}>
                         {marker.description || (voices.length ? 'Тексту ще немає' : 'Порожня точка')}
                     </p>
-                    {session ? (
+                    {isDemoId(String(marker.id)) ? (
+                        <p className='rounded-lg bg-brand-soft px-2.5 py-1.5 text-xs font-medium text-brand'>Демо-точка: показує, як виглядає позначка з кнопки 3</p>
+                    ) : session ? (
                         <div className='mt-1 flex gap-2'>
                             <button onClick={() => setEditing(true)}
                                     className='inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand py-2 text-sm font-semibold text-white'>

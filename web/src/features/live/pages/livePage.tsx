@@ -1,4 +1,4 @@
-import {LuCheck, LuMic, LuRoute} from "react-icons/lu";
+import {LuCheck, LuMapPin, LuMic, LuRoute, LuSiren, LuZap} from "react-icons/lu";
 import {NavBar} from "../../../shared/components/navBar.tsx";
 import {type FeedStatus, useLiveFeed} from "../hooks/useLiveFeed.ts";
 import {RoughnessGauge} from "../components/roughnessGauge.tsx";
@@ -13,6 +13,20 @@ import {Card} from "../../../shared/ui/card.tsx";
 import {CheckRow} from "../../../shared/ui/checkbox.tsx";
 import {LevelIcon} from "../../../shared/ui/levelIcon.tsx";
 import {LEVEL_META, LEVEL_ORDER} from "../../../shared/ui/levels.ts";
+import {demoButtons} from "../demoSource.ts";
+
+// Демо: «натиснути» кнопки пристрою з сайту, щоб показати, що відбувається
+const DemoPanel = () => {
+    const b = 'inline-flex items-center gap-2 rounded-xl border border-line bg-white px-3.5 py-2 text-sm font-semibold hover:bg-page'
+    return (
+        <div className='mb-5 flex flex-wrap items-center gap-2 rounded-2xl border border-dashed border-brand/40 bg-brand-soft/60 p-3'>
+            <span className='mr-1 text-sm text-brand'><b>Демо:</b> пристрій їде центром Житомира. Спробуйте:</span>
+            <button className={b} onClick={demoButtons.pit}><LuZap size={16} className='text-lvl-rough'/> Наїхати на яму</button>
+            <button className={b} onClick={demoButtons.point}><LuMapPin size={16} className='text-brand'/> Кнопка 3: точка</button>
+            <button className={`${b} text-sos`} onClick={demoButtons.sos}><LuSiren size={16}/> Натиснути SOS</button>
+        </div>
+    )
+}
 
 const STATUS: Record<FeedStatus, { text: string, tone: 'ok' | 'wait' | 'bad' | 'demo' }> = {
     connecting: {text: 'Підключення до сервера…', tone: 'wait'},
@@ -109,6 +123,7 @@ export const LivePage = () => {
                     <CheckRow className='ml-auto font-medium' checked={demo} onChange={setDemo}>Демо-режим</CheckRow>
                 </div>
 
+                {demo && hasData && <DemoPanel/>}
                 {store.sos && <SosBanner sos={store.sos} onDismiss={() => { store.sos = null }}/>}
                 <SosMissingNotice/>
                 {diag && <DiagRow diag={diag}/>}
