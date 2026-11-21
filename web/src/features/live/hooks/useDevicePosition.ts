@@ -2,6 +2,7 @@ import {useEffect, useState} from "react";
 import {useQueryClient} from "@tanstack/react-query";
 import {MqttSubscriber} from "../mqttWs.ts";
 import {MQTT_EVENT_TOPIC, MQTT_STATUS_TOPIC, MQTT_SUBSCRIBE, MQTT_TOPIC, MQTT_URL} from "../constants.ts";
+import {DEMO_SPEED, demoDeviceAt, useDemoWorld} from "../../demo/demoWorld.ts";
 
 export type DevicePosition = { lat: number, lng: number, sat?: number, spd?: number, at: number }
 
@@ -51,5 +52,20 @@ export const useDevicePosition = () => {
         return () => clearInterval(id)
     }, [])
     const fresh = pos && Date.now() - pos.at < 30000 ? pos : null
-    return {pos: fresh, lastPos: pos, online}
+
+    // Демо-режим: «пристрій» їде демо-кільцем; справжній, якщо він увімкнений, має перевагу
+    const world = useDemoWorld()
+    const [demoPos, setDemoPos] = useState<DevicePosition | null>(null)
+    useEffect(() => {
+        if (!world) return setDemoPos(null)
+        const step = () => {
+            const {p} = demoDeviceAt(world)
+            setDemoPos({lat: p.lat, lng: p.lng, sat: 9, spd: DEMO_SPEED * 3.6, at: Date.now()})
+        }
+        step()
+        const id = setInterval(step, 1000)
+        return () => clearInterval(id)
+    }, [world])
+    if (!fresh && demoPos) return {pos: demoPos, lastPos: demoPos, online: true, demo: true}
+    return {pos: fresh, lastPos: pos, online, demo: false}
 }

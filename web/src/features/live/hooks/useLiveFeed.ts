@@ -4,6 +4,8 @@ import {LiveStore} from "../liveStore.ts";
 import {MqttSubscriber} from "../mqttWs.ts";
 import {type DeviceDiag, type DeviceEvent, type LivePacket, MQTT_DIAG_TOPIC, MQTT_EVENT_TOPIC, MQTT_STATUS_TOPIC, MQTT_SUBSCRIBE, MQTT_TOPIC, MQTT_URL, OFFLINE_AFTER_MS} from "../constants.ts";
 import {startDemo} from "../demoSource.ts";
+import {useDemo} from "../../demo/demoStore.ts";
+import {useDemoWorld} from "../../demo/demoWorld.ts";
 
 export type FeedStatus = 'connecting' | 'waiting' | 'offline' | 'lowBattery' | 'noSensor' | 'live' | 'demo'
 
@@ -11,7 +13,10 @@ export type FeedStatus = 'connecting' | 'waiting' | 'offline' | 'lowBattery' | '
 // Дані лежать у LiveStore (ref), а React перемальовується ~5 разів на секунду.
 export const useLiveFeed = () => {
     const storeRef = useRef(new LiveStore())
-    const [demo, setDemo] = useState(() => new URLSearchParams(location.search).has('demo'))
+    // Демо-режим спільний для всього сайту
+    const demo = useDemo((s) => s.on)
+    const setDemo = useDemo((s) => s.setOn)
+    const world = useDemoWorld()
     const [brokerUp, setBrokerUp] = useState(false)
     // Стан, який пристрій сам публікує (retained), брокер ставить "offline", якщо пристрій зник
     const [deviceState, setDeviceState] = useState<string | null>(null)
@@ -22,7 +27,7 @@ export const useLiveFeed = () => {
     useEffect(() => {
         const store = storeRef.current
         store.reset()
-        if (demo) return startDemo((p) => store.push(p))
+        if (demo) return startDemo((p) => store.push(p), world, (e) => store.handleEvent(e))
 
         const client = new MqttSubscriber(MQTT_URL, MQTT_SUBSCRIBE, {
             onStatus: setBrokerUp,
@@ -61,7 +66,7 @@ export const useLiveFeed = () => {
             },
         })
         return () => client.close()
-    }, [demo, queryClient])
+    }, [demo, world, queryClient])
 
     useEffect(() => {
         const id = setInterval(() => setTick((n) => n + 1), 200)

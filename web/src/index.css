@@ -114,3 +114,13 @@ button:disabled {
     box-shadow: 0 4px 14px rgba(19, 35, 31, 0.15);
     font-family: var(--font-sans);
 }
+
+/* Демо-поїздка навігатора */
+.rv-rider { position: relative; width: 40px; height: 40px; }
+.rv-rider-arrow { position: relative; display: block; transition: transform .25s linear; filter: drop-shadow(0 2px 4px rgba(0,0,0,.35)); }
+.rv-rider-pulse { position: absolute; inset: 0; border-radius: 50%; background: #1f6fe5; opacity: .35; animation: rv-ping 1.6s ease-out infinite; }
+.rv-pit { width: 24px; height: 24px; filter: drop-shadow(0 1px 3px rgba(0,0,0,.4)); }
+.rv-pit-fresh { animation: rv-pop .5s ease-out, rv-blink 1s ease-in-out .5s infinite; }
+@keyframes rv-ping { from { transform: scale(.6); opacity: .45 } to { transform: scale(1.9); opacity: 0 } }
+@keyframes rv-pop { from { transform: scale(0) } 70% { transform: scale(1.5) } to { transform: scale(1) } }
+@keyframes rv-blink { 50% { transform: scale(1.25) } }

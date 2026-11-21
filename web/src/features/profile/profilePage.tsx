@@ -4,6 +4,7 @@ import {NavBar} from "../../shared/components/navBar.tsx";
 import {useAuthStore} from "../auth/store/useAuthStore.ts";
 import {signOut} from "../auth/requests.ts";
 import {btn} from "../../shared/ui/card.tsx";
+import {DemoRow} from "../../shared/components/demoToggle.tsx";
 
 // Вкладка «Профіль» на телефоні (на комп'ютері те саме — у меню під іконкою)
 export const ProfilePage = () => {
@@ -43,6 +44,7 @@ export const ProfilePage = () => {
                         <Link to='/register' className={btn.outline}>Зареєструватися</Link>
                     </div>
                 )}
+                <DemoRow/>
             </main>
         </div>
     )

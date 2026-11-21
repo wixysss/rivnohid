@@ -34,5 +34,10 @@ export const useRoutePoints = () => {
         setFromRaw(null)
         setToRaw(null)
     }
-    return {from, to, setFrom, setTo, clearFrom: () => setFromRaw(null), clearTo: () => setToRaw(null), pick, swap, reset}
+    // Готовий приклад для демо: обидві точки одразу
+    const example = (a: Point, b: Point) => {
+        withLabel(a, setFromRaw)
+        withLabel(b, setToRaw)
+    }
+    return {from, to, setFrom, setTo, clearFrom: () => setFromRaw(null), clearTo: () => setToRaw(null), pick, swap, reset, example}
 }

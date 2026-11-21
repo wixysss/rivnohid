@@ -1,7 +1,7 @@
 import {useEffect, useMemo, useState} from "react";
 import {Marker} from "react-leaflet";
 import type L from "leaflet";
-import {LuArrowUpDown, LuChevronDown, LuChevronUp, LuLocateFixed} from "react-icons/lu";
+import {LuArrowUpDown, LuChevronDown, LuChevronUp, LuLocateFixed, LuPlay, LuSparkles} from "react-icons/lu";
 import {useRoutePoints} from "../hooks/useRoutePoints.ts";
 import {useRankedRoutes} from "../hooks/useRankedRoutes.ts";
 import {MapView} from "../../map/components/mapView.tsx";
@@ -19,9 +19,17 @@ import {MOVERS, type MoverId} from "../profiles.ts";
 import {fmtKm, fmtMin, toVariants} from "../lib/variants.ts";
 import {useIsMobile} from "../../../shared/lib/useIsMobile.ts";
 import {myLocation} from "../../../shared/lib/geocode.ts";
+import {useMarkers} from "../../map/hooks/useMarkers.ts";
+import {RideLayer} from "../../demo/ride/RideLayer.tsx";
+import {RideHud} from "../../demo/ride/RideHud.tsx";
+import {rideStart, rideStop, useRide} from "../../demo/ride/rideStore.ts";
+import {DemoRow} from "../../../shared/components/demoToggle.tsx";
+
+// Приклад маршруту для демо: центр Житомира
+const EXAMPLE = {a: {lat: 50.25440, lng: 28.65800}, b: {lat: 50.26280, lng: 28.67420}}
 
 export const RoutePage = () => {
-    const {from, to, setFrom, setTo, clearFrom, clearTo, pick, swap} = useRoutePoints()
+    const {from, to, setFrom, setTo, clearFrom, clearTo, pick, swap, example} = useRoutePoints()
     const [moverId, setMoverId] = useState<MoverId>('wheelchair')
     const mover = MOVERS.find((m) => m.id === moverId) ?? MOVERS[0]
     const {routes, isLoading, error} = useRankedRoutes(from, to, mover)
@@ -34,12 +42,14 @@ export const RoutePage = () => {
     // Телефон: панель знизу або розгорнута, або згорнута до рядка з підсумком, щоб карту було видно
     const [open, setOpen] = useState(true)
     const PEEK = 112
+    const {data: markers} = useMarkers()
+    const riding = useRide((s) => s.status !== 'off')
 
     // Новий набір маршрутів — обираємо рекомендований і показуємо весь маршрут
     useEffect(() => {
         setSelected(variants[0]?.id ?? null)
         if (variants.length) setOpen(false)
-        if (map && variants.length) {
+        if (map && variants.length && useRide.getState().status === 'off') {
             const wide = window.innerWidth >= 768     // на комп'ютері зліва вгорі картка-підсумок, на телефоні знизу згорнута панель
             map.fitBounds(variants.flatMap((v) => v.path.map((p) => [p.lat, p.lng] as [number, number])),
                 wide ? {paddingTopLeft: [290, 60], paddingBottomRight: [80, 40]} : {paddingTopLeft: [30, 30], paddingBottomRight: [70, PEEK + 30]})
@@ -62,6 +72,18 @@ export const RoutePage = () => {
     }
     const center = map ? {lat: map.getCenter().lat, lng: map.getCenter().lng} : undefined
     const chosen = variants.find((v) => v.id === selected)
+
+    // Демо-поїздка обраним маршрутом; змінився маршрут чи сторінка — поїздка завершується
+    const startRide = () => {
+        if (!chosen || !to) return
+        setOpen(false)
+        rideStart({
+            path: chosen.path, dest: to, profile: mover.ors, baseSpeed: mover.speed,
+            markers: (markers ?? []).map((mk) => ({id: String(mk.id), lat: mk.lat, lng: mk.lng, severity: mk.severity, label: mk.marker_types?.label ?? 'Позначка'})),
+        })
+    }
+    useEffect(() => { rideStop() }, [chosen?.id, from?.lat, from?.lng, to?.lat, to?.lng, moverId])
+    useEffect(() => () => rideStop(), [])
 
     return (
         <div className='flex h-dvh flex-col'>
@@ -117,6 +139,12 @@ export const RoutePage = () => {
                         {(!from || !to) && <p className='mt-2.5 rounded-xl bg-page px-3 py-2.5 text-sm text-muted'>
                             {!from ? 'Вкажіть, звідки їдете, або натисніть на карту.' : 'Тепер куди: адреса або точка на карті.'}
                         </p>}
+                        {!from && !to && (
+                            <button onClick={() => example(EXAMPLE.a, EXAMPLE.b)}
+                                    className='mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-brand/50 px-3 py-2.5 text-sm font-semibold text-brand hover:bg-brand-soft'>
+                                <LuSparkles size={16}/> Показати приклад маршруту
+                            </button>
+                        )}
                     </section>
 
                     {(isLoading || error || variants.length > 0) && (
@@ -125,10 +153,20 @@ export const RoutePage = () => {
                             {isLoading && <div className='flex justify-center py-6'><span className='h-7 w-7 animate-spin rounded-full border-[3px] border-line border-t-brand'/></div>}
                             {error && <p className='rounded-xl bg-sos-soft p-3 text-sm text-sos'>Не вдалося побудувати маршрут. Спробуйте інші точки.</p>}
                             {variants.length > 0 && <RouteVariants variants={variants} selected={selected} onSelect={setSelected}/>}
+                            {chosen && (
+                                <div className='mt-3 rounded-2xl bg-brand-soft p-3'>
+                                    <button onClick={startRide}
+                                            className='inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-3 py-2.5 font-semibold text-white'>
+                                        <LuPlay size={16}/> {riding ? 'Почати поїздку знову' : 'Демо-поїздка'}
+                                    </button>
+                                    <p className='mt-2 text-xs leading-relaxed text-brand'>Пристрій проїде маршрут у реальному часі. Коли попереду з'явиться яма, він зупиниться і знайде об'їзд.</p>
+                                </div>
+                            )}
                         </section>
                     )}
 
                     <SurveyPanel device={device} onStartHere={(p) => setFrom({...p, label: 'Де пристрій'})}/>
+                    <DemoRow className='shrink-0 md:hidden'/>
                 </aside>
 
                 <div className='relative min-w-0 flex-1'>
@@ -136,10 +174,18 @@ export const RoutePage = () => {
                         <ClickLayer onPick={pick}/>
                         {from && <Marker icon={createPinIcon('A', '#173d33')} position={[from.lat, from.lng]}/>}
                         {to && <Marker icon={createPinIcon('Б', '#173d33')} position={[to.lat, to.lng]}/>}
-                        {variants.length > 0 && <RoutesLayer variants={variants} selected={selected} onSelect={setSelected}/>}
-                        <DevicePositionMarker pos={device.pos}/>
+                        {variants.length > 0 && !riding && <RoutesLayer variants={variants} selected={selected} onSelect={setSelected}/>}
+                        {!riding && <DevicePositionMarker pos={device.pos}/>}
+                        <RideLayer/>
                     </MapView>
-                    <RouteSummary variants={variants} selected={selected}/>
+                    {!riding && <RouteSummary variants={variants} selected={selected}/>}
+                    <RideHud onRestart={startRide}/>
+                    {chosen && !riding && (
+                        <button onClick={startRide} style={mobile ? {bottom: PEEK + 62 + 14} : undefined}
+                                className={`absolute left-1/2 z-[1000] inline-flex -translate-x-1/2 items-center gap-2 rounded-full bg-brand px-5 py-3 font-semibold text-white shadow-lg md:bottom-6 ${mobile && open ? 'hidden' : ''}`}>
+                            <LuPlay size={17}/> Демо-поїздка
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

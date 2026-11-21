@@ -30,3 +30,24 @@ export const getRoutes = async (from: Point, to: Point, profile: OrsProfile = 'w
         duration: feature.properties.summary.duration
     }))
 }
+
+// Один маршрут через кілька точок, з можливістю оминути зони (ями) — для демо-поїздки
+export const getPath = async (points: Point[], profile: OrsProfile = 'wheelchair', avoid: [number, number][][] = []): Promise<Route> => {
+    const response = await fetch(`https://api.heigit.org/openrouteservice/v2/directions/${profile}/geojson`, {
+        method: 'POST',
+        headers: {Authorization: import.meta.env.VITE_ORS_API_KEY, 'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            coordinates: points.map((p) => [p.lng, p.lat]),
+            ...(avoid.length ? {options: {avoid_polygons: {type: 'MultiPolygon', coordinates: avoid.map((ring) => [ring])}}} : {}),
+        })
+    })
+    if (!response.ok) throw new Error(`Помилка маршруту: ${response.status}`)
+    const data: OrsResponse = await response.json()
+    const f = data.features[0]
+    return {
+        id: 0,
+        path: f.geometry.coordinates.map(([lng, lat]) => ({lat, lng})),
+        distance: f.properties.summary.distance,
+        duration: f.properties.summary.duration,
+    }
+}

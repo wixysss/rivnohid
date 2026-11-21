@@ -4,6 +4,7 @@ import {useDeleteMarker} from "../hooks/useDeleteMarker.ts";
 import {LevelBadge} from "../../../shared/ui/levelIcon.tsx";
 import {levelOfSeverity} from "../../../shared/ui/levels.ts";
 import type {MarkerRow} from "./mapView.tsx";
+import {isDemoId} from "../../demo/demoWorld.ts";
 
 export const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('uk-UA', {day: 'numeric', month: 'long'})
 
@@ -23,6 +24,7 @@ export const MarkerPopup = ({marker}: { marker: MarkerRow }) => {
                 {marker.profiles?.display_name ? ` · ${marker.profiles.display_name}` : marker.source === 'device' ? ' · з пристрою' : ''}
             </p>
             <p className='text-xs text-faint'>{marker.lat.toFixed(5)}, {marker.lng.toFixed(5)}</p>
+            {isDemoId(String(marker.id)) && <p className='rounded-lg bg-brand-soft px-2.5 py-1.5 text-xs font-medium text-brand'>Демо-позначка</p>}
             {isOwner && (
                 <button disabled={isPending} onClick={() => mutate(marker.id)}
                         className='mt-1 inline-flex items-center justify-center gap-2 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-sos hover:bg-sos-soft disabled:opacity-50'>

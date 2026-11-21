@@ -4,6 +4,7 @@ import {LuActivity, LuLogOut, LuMap, LuMapPin, LuNavigation, LuSiren, LuUser} fr
 import {signOut} from "../../features/auth/requests.ts";
 import {useAuthStore} from "../../features/auth/store/useAuthStore.ts";
 import {NAV_LINKS} from "../constants.ts";
+import {DemoToggle} from "./demoToggle.tsx";
 
 export const Logo = ({compact = false}: { compact?: boolean }) => (
     <Link to='/map' className='flex items-center gap-2.5'>
@@ -107,6 +108,7 @@ export const NavBar = ({mobileBar = true}: { mobileBar?: boolean }) => (
                 ))}
             </nav>
             <div className='flex items-center gap-2.5'>
+                <DemoToggle className='hidden md:inline-flex'/>
                 <SosButton/>
                 <ProfileMenu/>
             </div>
