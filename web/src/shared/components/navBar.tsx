@@ -108,7 +108,7 @@ export const NavBar = ({mobileBar = true}: { mobileBar?: boolean }) => (
                 ))}
             </nav>
             <div className='flex items-center gap-2.5'>
-                <DemoToggle className='hidden md:inline-flex'/>
+                <span className='hidden md:block'><DemoToggle/></span>
                 <SosButton/>
                 <ProfileMenu/>
             </div>

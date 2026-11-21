@@ -3,13 +3,16 @@ import {create} from "zustand";
 const KEY = 'rv-demo'
 const initial = () => {
     try {
-        if (new URLSearchParams(location.search).has('demo')) return true
+        // Посилання з ?demo вмикає демо і запам'ятовує це для інших вкладок сайту
+        if (new URLSearchParams(location.search).has('demo')) {
+            localStorage.setItem(KEY, '1')
+            return true
+        }
         return localStorage.getItem(KEY) === '1'
     } catch {
         return false
     }
 }
-
 // Демо-режим для всього сайту: пристрій, позначки й трек — вигадані, щоб показати роботу без заліза
 export const useDemo = create<{ on: boolean, setOn: (on: boolean) => void, toggle: () => void }>((set, get) => ({
     on: initial(),
