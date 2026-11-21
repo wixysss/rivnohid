@@ -27,7 +27,7 @@ export const RideHud = ({onRestart}: { onRestart: () => void }) => {
         <div className='absolute left-3 right-[64px] top-3 z-[1000] rounded-2xl border border-line bg-white/95 p-3 md:p-3.5 shadow-lg backdrop-blur md:left-3 md:right-auto md:w-[320px]'>
             <div className='flex items-center gap-2'>
                 <span className='rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-brand'>Демо</span>
-                <span className='font-bold'>Поїздка маршрутом</span>
+                <span className='font-bold'>Поїздка</span>
                 <span className={`ml-auto inline-flex items-center gap-1.5 text-xs font-semibold ${s.status === 'rerouting' ? 'text-[#8a5a00]' : 'text-muted'}`}>
                     <i className={`inline-block h-2 w-2 rounded-full ${s.status === 'running' ? 'animate-pulse bg-[#22a35a]' : s.status === 'rerouting' ? 'animate-pulse bg-lvl-uneven' : s.status === 'done' ? 'bg-brand' : 'bg-faint'}`}/>
                     {STATUS[s.status]}
